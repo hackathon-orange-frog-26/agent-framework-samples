@@ -111,7 +111,7 @@ FOUNDRY_ID=$(az cognitiveservices account list -g "$AZURE_RESOURCE_GROUP" --quer
 az role assignment create \
   --assignee-object-id "$AGENT_IDENTITY_ID" \
   --assignee-principal-type ServicePrincipal \
-  --role "Azure AI User" \
+  --role "Foundry User" \
   --scope "$FOUNDRY_ID"
 ```
 
