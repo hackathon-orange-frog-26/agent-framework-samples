@@ -7,6 +7,9 @@
       "installBicep": true
     },
     "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/dotnet:2": {
+      "version": "8.0"
+    },
     "ghcr.io/devcontainers/features/node:1": {
       "version": "lts"
     }
@@ -32,7 +35,7 @@
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteEnv": {
-    "PATH": "${containerWorkspaceFolder}/.venv/bin:${containerEnv:PATH}",
+    "PATH": "${containerWorkspaceFolder}/.venv/bin:${containerEnv:PATH}:/home/vscode/.dotnet/tools",
     "PYTHONUNBUFFERED": "1",
     "VIRTUAL_ENV": "${containerWorkspaceFolder}/.venv"
   },

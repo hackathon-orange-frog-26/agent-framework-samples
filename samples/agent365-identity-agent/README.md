@@ -209,6 +209,10 @@ permission (for example `AgentIdentity.CreateAsManager`).
 
 ## Agent 365 registry
 
+The repository's devcontainer installs the Agent 365 CLI (`a365`) automatically.
+For an existing Codespace, rebuild the container and verify with `a365 --help`.
+See [CLI installation and update instructions](../../README.md#agent-365-cli-in-codespaces).
+
 Identities created through the Graph APIs don't automatically appear in the Agent 365
 registry in the Microsoft 365 admin center. To make the blueprint discoverable and governable
 there, register it with `a365 setup all --agent-registration-only`, or call the
