@@ -23,15 +23,23 @@ that identity:
 | Concern | Implementation |
 | --- | --- |
 | Blueprint and agent identity provisioning | [Entra Agent ID Microsoft Graph APIs](https://learn.microsoft.com/entra/agent-id/create-blueprint) (`app/graph.py`). The Agent 365 SDK doesn't provision identities. The [Agent 365 CLI](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup) wraps the same APIs. |
-| Agent identity tokens | [Autonomous agent token flow](https://learn.microsoft.com/entra/agent-id/autonomous-agent-authentication-authorization-flow): the blueprint requests an exchange token with `fmi_path=<agent identity>`, which becomes the agent identity's client assertion (`app/agent_token.py`, MSAL). |
+| Agent identity tokens | Inside the sandbox, managed-identity federation authenticates the blueprint and requests an exchange token with `fmi_path=<agent identity>`. User-assigned identities use Microsoft 365 Agents SDK `MsalAuth.get_agentic_application_token`; system-assigned identities use the shared Azure Identity/MSAL provider in `app/agent_token.py`. MSAL exchanges the blueprint token for a Foundry token as the agent identity (`app/sandbox_agent.py`). |
 | Agent identity resolution | Agent 365 SDK `Utility.get_app_id_from_token`, `Utility.get_agent_id_from_token` (blueprint from `xms_par_app_azp`), and `Utility.get_user_agent_header` (`app/sandbox_agent.py`, `identity whoami`). |
 | Agent runtime | Agent Framework with `FoundryChatClient`, executed in an ephemeral sandbox (`app/host.py`). |
 
 ```text
 developer ──device code──▶ Graph: create blueprint / agent identity, enable / disable / delete
-launcher  ──blueprint credential──▶ Entra: exchange token (fmi_path) ──▶ agent identity token (ai.azure.com)
-launcher  ──upload token──▶ sandbox: Agent 365 SDK resolves identity ──▶ Foundry model call as the agent identity
+launcher  ──upload code + non-secret configuration──▶ sandbox
+sandbox   ──managed identity federation──▶ blueprint exchange (fmi_path) ──▶ agent identity token (ai.azure.com)
+sandbox   ──Agent 365 SDK resolves identity──▶ Foundry model call as the agent identity
 ```
+
+The Agent 365 runtime SDK provides identity helpers, not a token-acquisition client.
+Authentication uses the companion Microsoft 365 Agents authentication SDK and MSAL,
+following the [Agent 365 SDK service-to-service token pattern](https://learn.microsoft.com/microsoft-agent-365/developer/observability).
+The SDK's `FederatedCredentials` mode requires a user-assigned identity client ID.
+For system-assigned federation, the sample uses its shared Azure Identity/MSAL provider
+instead; both paths retain the Agent 365 SDK identity diagnostics.
 
 ## Prerequisites
 
@@ -44,6 +52,12 @@ launcher  ──upload token──▶ sandbox: Agent 365 SDK resolves identity �
   Administrator**. Adding a client secret to a blueprint requires **Agent ID Administrator**.
   Blueprint owners can manage the blueprint's agent identities without extra roles.
 - Python 3.11 or newer locally (required by the Agent 365 SDK).
+- A system-assigned or user-assigned managed identity attached to the sandbox group.
+  Leave `AGENT_BLUEPRINT_MANAGED_IDENTITY_CLIENT_ID` empty for the system-assigned identity;
+  for a user-assigned identity, set its **client ID**, not its object/principal ID.
+  The sandbox runtime must be able to acquire
+  managed identity tokens for `api://AzureADTokenExchange`; attaching a group identity alone
+  does not verify that capability.
 
 The management CLI signs you in with the device code flow using the Microsoft Graph
 PowerShell public client (`14d82eec-204b-4c2f-b7e8-296a70dab67e`), and requests only the
@@ -75,19 +89,36 @@ You become the blueprint's owner and, unless you pass `--sponsor-id`, its sponso
 
 ### 2. Give the blueprint a credential
 
-For local development, add a short-lived client secret:
+Trust the sandbox group's managed identity (system-assigned or user-assigned):
+
+```bash
+python -m app.manage_identity blueprint add-managed-identity --principal-id <managed-identity-object-id>
+# System-assigned:
+export AGENT_BLUEPRINT_MANAGED_IDENTITY_CLIENT_ID=
+# Or, for a user-assigned identity:
+# export AGENT_BLUEPRINT_MANAGED_IDENTITY_CLIENT_ID=<managed-identity-client-id>
+```
+
+The federated credential uses the managed identity's **object/principal ID**; runtime
+configuration uses its **client ID**. The launcher passes only non-secret identity IDs to
+the sandbox. It never uses a blueprint secret to run the agent.
+
+If the Agents SDK reports `invalid_scope` with `error_description: 'None, None'`, this can
+mask a managed identity endpoint error rather than an invalid audience. Check the identity
+selection first: a system-assigned identity must not be selected by its principal ID.
+For a user-assigned identity, verify the configured client ID belongs to an identity
+actually attached to the sandbox group.
+
+For local management commands such as `identity whoami`, you can optionally add a
+short-lived development secret:
 
 ```bash
 python -m app.manage_identity blueprint add-secret --days 30
 # -> export AGENT_BLUEPRINT_CLIENT_SECRET=<secret printed once>
 ```
 
-On Azure compute, trust a managed identity instead and leave the secret empty:
-
-```bash
-python -m app.manage_identity blueprint add-managed-identity --principal-id <managed-identity-object-id>
-# Set AGENT_BLUEPRINT_MANAGED_IDENTITY_CLIENT_ID for a user-assigned identity.
-```
+On Azure compute with access to the trusted managed identity, management commands can also
+use federation instead of a secret.
 
 ### 3. Create the agent identity
 
@@ -133,8 +164,11 @@ User-Agent:     Agent365SDK/2.0.0 (Linux; Python 3.14.0; AgentFramework)
 An agent identity makes every action attributable, auditable, and revocable ...
 ```
 
-The launcher acquires the agent identity token **before** creating a sandbox, so a disabled
-or deleted identity fails fast without provisioning compute.
+The sandbox acquires its agent identity token at runtime and reacquires tokens through a
+refreshable credential backed by MSAL's in-memory cache. A disabled or deleted identity
+fails inside the sandbox; the launcher reports the failure and deletes the sandbox.
+`identity whoami` runs locally, so it needs a credential available on the local machine,
+even when the sandbox itself uses managed identity.
 
 ## Manage agent identities
 
@@ -186,8 +220,12 @@ The trust boundary is the same as in [`sandbox-hosted-agent`](../sandbox-hosted-
 but the token in the sandbox now belongs to the agent identity, not to you. It's
 scoped to Foundry (`https://ai.azure.com/.default`), short-lived, and limited to the
 permissions you granted the agent identity. Still, **don't run model-generated or
-user-supplied code in the same sandbox**. The blueprint credential (secret or managed identity)
-stays on the launcher and never enters the sandbox.
+user-supplied code in the same sandbox**. No token file or blueprint secret is uploaded.
+Instead, sandbox code can authenticate the blueprint through its trusted managed identity,
+which is a broader capability than holding a single Foundry token. Code with access to that
+identity can request tokens for other agent identities managed by the same blueprint,
+subject to their permissions. Use separate blueprints and managed identities for different
+trust boundaries; do not share this identity with untrusted sandboxes.
 
 The Agent 365 SDK identity helpers decode tokens **without signature verification**. The
 sandbox uses them for diagnostics and fail-fast misconfiguration checks, not authorization.
@@ -198,9 +236,9 @@ sandbox uses them for diagnostics and fail-fast misconfiguration checks, not aut
 | --- | --- |
 | `app/manage_identity.py` | CLI to create and manage the blueprint and agent identities. |
 | `app/graph.py` | Microsoft Graph client for Entra Agent ID blueprints and agent identities. |
-| `app/agent_token.py` | Blueprint to agent identity token exchange (MSAL, `fmi_path`). |
-| `app/host.py` | Host-side sandbox provisioning, agent identity token transfer, execution, and cleanup. |
-| `app/sandbox_agent.py` | Agent Framework program that runs inside the sandbox and resolves its identity with the Agent 365 SDK. |
+| `app/agent_token.py` | Shared blueprint-to-agent token exchange (MSAL, `fmi_path`), used by management commands and system-assigned sandbox federation. |
+| `app/host.py` | Host-side sandbox provisioning, non-secret configuration transfer, execution, and cleanup. |
+| `app/sandbox_agent.py` | Sandbox-local managed identity federation, refreshable agent token credential, and Agent Framework execution with Agent 365 identity diagnostics. |
 | `app/run_agent.py` | Command-line entry point for running the agent. |
 | `requirements.txt` | Dependencies for the launcher and management CLI. |
 | `requirements-sandbox.txt` | Dependencies installed inside the sandbox. |

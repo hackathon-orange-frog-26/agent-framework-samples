@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +30,7 @@ SETTINGS = Settings(
         blueprint_app_id="blueprint-app",
         agent_identity_client_id="agent-app",
         blueprint_client_secret="secret",
+        managed_identity_client_id="managed-identity-client",
     ),
 )
 
@@ -93,12 +94,7 @@ def test_agent_runs_in_sandbox_as_agent_identity_without_secrets_in_commands() -
     client = Closeable(sandbox)
     credential = Closeable()
 
-    async def token_provider() -> tuple[str, int]:
-        return "agent-identity-access-token", 2_000_000_000
-
-    agent = AgentIdentitySandboxAgent(
-        SETTINGS, token_provider=token_provider, client_factory=lambda settings: (client, credential)
-    )
+    agent = AgentIdentitySandboxAgent(SETTINGS, client_factory=lambda settings: (client, credential))
     result = asyncio.run(agent.run("question with 'shell syntax' $(oops)"))
 
     assert result.answer == "Answer from sandbox"
@@ -107,10 +103,18 @@ def test_agent_runs_in_sandbox_as_agent_identity_without_secrets_in_commands() -
     request = json.loads(sandbox.files["/workspace/request.json"])
     assert request["agent_identity_client_id"] == "agent-app"
     assert "shell syntax" in request["question"]
-    assert "agent-identity-access-token" in sandbox.files["/tmp/agent-identity-token.json"]
+    assert request["tenant_id"] == "tenant"
+    assert request["blueprint_app_id"] == "blueprint-app"
+    assert request["managed_identity_client_id"] == "managed-identity-client"
+    assert set(sandbox.files) == {
+        "/workspace/sandbox_agent.py", "/workspace/agent_token.py",
+        "/workspace/requirements-sandbox.txt", "/workspace/request.json"
+    }
+    assert "secret" not in request
+    assert SETTINGS.identity.blueprint_client_secret not in request.values()
     assert "microsoft-agents-a365-runtime" in sandbox.files["/workspace/requirements-sandbox.txt"]
     assert all(
-        "agent-identity-access-token" not in command and "shell syntax" not in command for command in sandbox.commands
+        "--token" not in command and "shell syntax" not in command for command in sandbox.commands
     )
     assert client.create_calls[0]["labels"]["agent-identity"] == "agent-app"
     assert sandbox.deleted
@@ -118,20 +122,29 @@ def test_agent_runs_in_sandbox_as_agent_identity_without_secrets_in_commands() -
     assert credential.closed
 
 
-def test_token_failure_does_not_create_sandbox() -> None:
-    created: list[bool] = []
+def test_system_assigned_identity_does_not_send_client_id() -> None:
+    sandbox = FakeSandbox()
+    client, credential = Closeable(sandbox), Closeable()
+    settings = replace(SETTINGS, identity=replace(SETTINGS.identity, managed_identity_client_id=None))
+    agent = AgentIdentitySandboxAgent(settings, client_factory=lambda settings: (client, credential))
+    asyncio.run(agent.run("question"))
+    assert json.loads(sandbox.files["/workspace/request.json"])["managed_identity_client_id"] is None
+    assert sandbox.deleted and client.closed and credential.closed
 
-    async def token_provider() -> tuple[str, int]:
-        raise RuntimeError("Agent identity token request failed: disabled")
 
-    def client_factory(settings: Settings) -> tuple[Any, Any]:
-        created.append(True)
-        return Closeable(FakeSandbox()), Closeable()
+def test_sandbox_token_failure_is_reported_and_compute_is_cleaned_up() -> None:
+    class FailingSandbox(FakeSandbox):
+        async def exec(self, command: str, **kwargs: Any) -> ExecResult:
+            if command.startswith("python3 /workspace/sandbox_agent.py"):
+                return ExecResult(exit_code=1, stderr="Agent identity token request failed: disabled")
+            return await super().exec(command, **kwargs)
 
-    agent = AgentIdentitySandboxAgent(SETTINGS, token_provider=token_provider, client_factory=client_factory)
+    sandbox = FailingSandbox()
+    client, credential = Closeable(sandbox), Closeable()
+    agent = AgentIdentitySandboxAgent(SETTINGS, client_factory=lambda settings: (client, credential))
     with pytest.raises(RuntimeError, match="disabled"):
         asyncio.run(agent.run("question"))
-    assert not created
+    assert sandbox.deleted and client.closed and credential.closed
 
 
 def _token(claims: dict[str, str]) -> str:
