@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 TOKEN_EXCHANGE_SCOPE = "api://AzureADTokenExchange/.default"
 GRAPH_DEFAULT_SCOPE = "https://graph.microsoft.com/.default"
+OBSERVABILITY_SCOPE = "api://9b975845-388f-4429-889e-eab1ef63949c/.default"
 
 AppFactory = Callable[..., Any]
 AssertionProvider = Callable[[], str]

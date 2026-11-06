@@ -33,6 +33,11 @@ class Settings:
     sandbox_region: str
     sandbox_disk_image: str
     identity: IdentitySettings
+    observability_enabled: bool = False
+    observability_capture_content: bool = False
+    observability_sponsor_id: str | None = None
+    observability_sponsor_name: str | None = None
+    observability_sponsor_email: str | None = None
 
 
 def _require(name: str) -> str:
@@ -44,6 +49,13 @@ def _require(name: str) -> str:
 
 def _optional(name: str) -> str | None:
     return os.environ.get(name) or None
+
+
+def _boolean(name: str) -> bool:
+    value = os.environ.get(name, "false").strip().lower()
+    if value not in {"true", "false"}:
+        raise RuntimeError(f"{name} must be true or false")
+    return value == "true"
 
 
 def get_identity_settings() -> IdentitySettings:
@@ -65,6 +77,7 @@ def get_settings() -> Settings:
     identity = get_identity_settings()
     if not identity.blueprint_app_id or not identity.agent_identity_client_id:
         raise RuntimeError("AGENT_BLUEPRINT_APP_ID and AGENT_IDENTITY_CLIENT_ID environment variables are required")
+    observability_enabled = _boolean("ENABLE_A365_OBSERVABILITY_EXPORTER")
     return Settings(
         foundry_project_endpoint=_require("FOUNDRY_PROJECT_ENDPOINT"),
         foundry_model_deployment=os.environ.get("FOUNDRY_MODEL_DEPLOYMENT", "gpt-5"),
@@ -74,4 +87,9 @@ def get_settings() -> Settings:
         sandbox_region=_require("AZURE_SANDBOX_REGION"),
         sandbox_disk_image=os.environ.get("SANDBOX_DISK_IMAGE", "python-3.14"),
         identity=identity,
+        observability_enabled=observability_enabled,
+        observability_capture_content=_boolean("A365_CAPTURE_CONTENT"),
+        observability_sponsor_id=_require("A365_SPONSOR_ID") if observability_enabled else None,
+        observability_sponsor_name=_require("A365_SPONSOR_NAME") if observability_enabled else None,
+        observability_sponsor_email=_require("A365_SPONSOR_EMAIL") if observability_enabled else None,
     )

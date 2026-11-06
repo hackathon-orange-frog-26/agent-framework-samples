@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -78,6 +80,8 @@ class AgentIdentitySandboxAgent:
                 f"python3 {REMOTE_AGENT} --request {REMOTE_REQUEST}",
                 working_directory=WORKSPACE,
             )
+            if result.stderr:
+                print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
             if result.exit_code != 0:
                 raise RuntimeError(f"Sandbox agent failed:\n{result.stderr}")
             payload = json.loads(result.stdout.strip().splitlines()[-1])
@@ -107,7 +111,23 @@ class AgentIdentitySandboxAgent:
             "model_deployment": self._settings.foundry_model_deployment,
             "agent_identity_client_id": self._settings.identity.agent_identity_client_id,
             "question": question,
+            "observability_enabled": self._settings.observability_enabled,
         }
+        if self._settings.observability_enabled:
+            request.update(
+                observability_capture_content=self._settings.observability_capture_content,
+                observability_sponsor_id=self._settings.observability_sponsor_id,
+                observability_sponsor_name=self._settings.observability_sponsor_name,
+                observability_sponsor_email=self._settings.observability_sponsor_email,
+            )
+            for name in ("OTEL_LOG_LEVEL", "A365_OBSERVABILITY_LOG_LEVEL"):
+                request[name] = os.environ.get(
+                    name, "INFO" if name == "OTEL_LOG_LEVEL" else "info|warn|error"
+                )
+            await sandbox.write_file(
+                f"{WORKSPACE}/observability.py",
+                Path(__file__).with_name("observability.py").read_text(encoding="utf-8"),
+            )
         await sandbox.write_file(REMOTE_AGENT, source)
         await sandbox.write_file(
             f"{WORKSPACE}/agent_token.py", Path(__file__).with_name("agent_token.py").read_text(encoding="utf-8")

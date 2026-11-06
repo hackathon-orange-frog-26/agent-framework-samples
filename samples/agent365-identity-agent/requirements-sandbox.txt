@@ -4,4 +4,5 @@ azure-core>=1.30,<2
 azure-identity>=1.19,<2
 microsoft-agents-a365-runtime>=2.0,<3
 microsoft-agents-authentication-msal>=1.9,<2
+microsoft-opentelemetry>=1.6,<2
 msal>=1.39,<2

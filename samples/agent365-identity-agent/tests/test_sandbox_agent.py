@@ -130,6 +130,26 @@ def test_resource_token_failure_is_reported(monkeypatch: pytest.MonkeyPatch) -> 
         asyncio.run(credential.get_token(sandbox_agent.FOUNDRY_SCOPE))
 
 
+def test_observability_token_reuses_federation_with_its_own_audience(monkeypatch: pytest.MonkeyPatch) -> None:
+    credential = make_credential()
+    exchange = AsyncMock(return_value="assertion")
+    monkeypatch.setattr(credential._connection, "get_agentic_application_token", exchange)
+
+    class FakeApp:
+        def __init__(self, client_id: str, **kwargs: Any) -> None:
+            assert client_id == "agent-app"
+            assert kwargs["client_credential"] == {"client_assertion": "assertion"}
+
+        def acquire_token_for_client(self, scopes: list[str]) -> dict[str, Any]:
+            assert scopes == [sandbox_agent.OBSERVABILITY_SCOPE]
+            return {"access_token": "observability-token", "expires_in": 3600}
+
+    monkeypatch.setattr(sandbox_agent, "ConfidentialClientApplication", FakeApp)
+    token = asyncio.run(credential.get_token(sandbox_agent.OBSERVABILITY_SCOPE))
+    assert token.token == "observability-token"
+    exchange.assert_awaited_once_with("tenant", "agent-app")
+
+
 @pytest.mark.parametrize("scopes", [(), ("https://graph.microsoft.com/.default",)])
 def test_credential_rejects_other_scopes(scopes: tuple[str, ...]) -> None:
     with pytest.raises(ValueError, match="only supports"):
@@ -210,7 +230,7 @@ def test_runtime_acquires_token_and_checks_identity_before_model_call(
 
     class FakeAgent:
         def __init__(self, **kwargs: Any) -> None:
-            pass
+            assert kwargs["id"] == "agent-app"
 
         async def run(self, question: str) -> str:
             assert question == "hello"

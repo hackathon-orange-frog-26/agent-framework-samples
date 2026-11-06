@@ -6,9 +6,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
@@ -18,11 +19,14 @@ from microsoft_agents_a365.runtime import Utility
 from msal import ConfidentialClientApplication, TokenCache
 
 if __package__:
-    from .agent_token import AgentIdentityTokenProvider, managed_identity_assertion
+    from .agent_token import OBSERVABILITY_SCOPE, AgentIdentityTokenProvider, managed_identity_assertion
 else:
-    from agent_token import AgentIdentityTokenProvider, managed_identity_assertion
+    from agent_token import OBSERVABILITY_SCOPE, AgentIdentityTokenProvider, managed_identity_assertion
 
 FOUNDRY_SCOPE = "https://ai.azure.com/.default"
+
+if TYPE_CHECKING:
+    from .observability import SandboxObservability
 
 
 class AgentIdentityCredential(AsyncTokenCredential):
@@ -58,8 +62,8 @@ class AgentIdentityCredential(AsyncTokenCredential):
         self._cache = TokenCache()
 
     async def get_token(self, *scopes: str, **kwargs: Any) -> AccessToken:
-        if scopes != (FOUNDRY_SCOPE,):
-            raise ValueError(f"This credential only supports {FOUNDRY_SCOPE}")
+        if len(scopes) != 1 or scopes[0] not in {FOUNDRY_SCOPE, OBSERVABILITY_SCOPE}:
+            raise ValueError(f"This credential only supports {FOUNDRY_SCOPE} or {OBSERVABILITY_SCOPE}")
         if self._system_identity_provider is not None:
             token, expires_on = await asyncio.to_thread(
                 self._system_identity_provider.agent_identity_token, self._agent_client_id, scopes[0]
@@ -113,9 +117,6 @@ def describe_identity(token: str, expected_agent_identity: str) -> dict[str, str
 
 async def run(request_path: Path) -> dict[str, Any]:
     """Run one request through an agent that authenticates as its own agent identity."""
-    from agent_framework import Agent
-    from agent_framework.foundry import FoundryChatClient
-
     request = json.loads(request_path.read_text(encoding="utf-8"))
     credential = AgentIdentityCredential(
         request["tenant_id"],
@@ -123,23 +124,67 @@ async def run(request_path: Path) -> dict[str, Any]:
         request["agent_identity_client_id"],
         request.get("managed_identity_client_id"),
     )
-    token = await credential.get_token(FOUNDRY_SCOPE)
-    identity = describe_identity(token.token, request["agent_identity_client_id"])
-    if identity["blueprint"] != request["blueprint_app_id"]:
-        raise RuntimeError(f"Token blueprint does not match expected blueprint {request['blueprint_app_id']}")
+    telemetry: SandboxObservability | None = None
+    try:
+        token = await credential.get_token(FOUNDRY_SCOPE)
+        identity = describe_identity(token.token, request["agent_identity_client_id"])
+        if identity["blueprint"] != request["blueprint_app_id"]:
+            raise RuntimeError(f"Token blueprint does not match expected blueprint {request['blueprint_app_id']}")
 
-    client = FoundryChatClient(
-        project_endpoint=request["project_endpoint"],
-        model=request["model_deployment"],
-        credential=credential,
-    )
-    agent = Agent(
-        client=client,
-        name="agent365-identity-agent",
-        instructions="Answer the user's question directly and concisely.",
-    )
-    response = await agent.run(request["question"])
-    return {**identity, "answer": str(response)}
+        if request.get("observability_enabled", False):
+            for name in ("OTEL_LOG_LEVEL", "A365_OBSERVABILITY_LOG_LEVEL"):
+                if name in request:
+                    os.environ[name] = request[name]
+            if __package__:
+                from .observability import SandboxObservability
+            else:
+                from observability import SandboxObservability
+            telemetry = SandboxObservability(
+                credential,
+                tenant_id=request["tenant_id"],
+                agent_id=identity["agent_identity"],
+                blueprint_id=identity["blueprint"],
+                sponsor_id=request["observability_sponsor_id"],
+                sponsor_name=request["observability_sponsor_name"],
+                sponsor_email=request["observability_sponsor_email"],
+                capture_content=request.get("observability_capture_content", False),
+            )
+            await telemetry.start()
+
+        from agent_framework import Agent
+        from agent_framework.foundry import FoundryChatClient
+
+        client = FoundryChatClient(
+            project_endpoint=request["project_endpoint"],
+            model=request["model_deployment"],
+            credential=credential,
+        )
+        agent = Agent(
+            client=client,
+            id=identity["agent_identity"],
+            name="agent365-identity-agent",
+            instructions="Answer the user's question directly and concisely.",
+        )
+        if telemetry is None:
+            response = await agent.run(request["question"])
+        else:
+            with telemetry.invocation(request["question"]) as invocation:
+                with telemetry.inference(request["question"], request["model_deployment"]) as inference:
+                    response = await agent.run(request["question"])
+                    if response.usage_details:
+                        if "input_token_count" in response.usage_details:
+                            inference.record_input_tokens(response.usage_details["input_token_count"])
+                        if "output_token_count" in response.usage_details:
+                            inference.record_output_tokens(response.usage_details["output_token_count"])
+                    telemetry.record_output(inference, str(response))
+                telemetry.record_output(invocation, str(response))
+        return {**identity, "answer": str(response)}
+    finally:
+        try:
+            if telemetry is not None:
+                await telemetry.close()
+        finally:
+            await credential.close()
 
 
 async def main() -> int:

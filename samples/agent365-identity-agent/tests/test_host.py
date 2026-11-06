@@ -132,6 +132,44 @@ def test_system_assigned_identity_does_not_send_client_id() -> None:
     assert sandbox.deleted and client.closed and credential.closed
 
 
+def test_observability_uploads_code_and_sponsor_without_credentials(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class LoggingSandbox(FakeSandbox):
+        async def exec(self, command: str, **kwargs: Any) -> ExecResult:
+            result = await super().exec(command, **kwargs)
+            if command.startswith("python3 /workspace/sandbox_agent.py"):
+                result.stderr = "HTTP 200 - spans exported\n"
+            return result
+
+    monkeypatch.setenv("OTEL_LOG_LEVEL", "WARN")
+    monkeypatch.setenv("A365_OBSERVABILITY_LOG_LEVEL", "warn|error")
+    settings = replace(
+        SETTINGS,
+        observability_enabled=True,
+        observability_capture_content=True,
+        observability_sponsor_id="sponsor",
+        observability_sponsor_name="Sponsor",
+        observability_sponsor_email="sponsor@example.com",
+    )
+    sandbox = LoggingSandbox()
+    client, credential = Closeable(sandbox), Closeable()
+    agent = AgentIdentitySandboxAgent(settings, client_factory=lambda settings: (client, credential))
+    asyncio.run(agent.run("question"))
+    request = json.loads(sandbox.files["/workspace/request.json"])
+    assert request["observability_enabled"] is True
+    assert request["observability_capture_content"] is True
+    assert request["observability_sponsor_id"] == "sponsor"
+    assert request["observability_sponsor_name"] == "Sponsor"
+    assert request["observability_sponsor_email"] == "sponsor@example.com"
+    assert request["OTEL_LOG_LEVEL"] == "WARN"
+    assert request["A365_OBSERVABILITY_LOG_LEVEL"] == "warn|error"
+    assert SETTINGS.identity.blueprint_client_secret not in request.values()
+    assert "/workspace/observability.py" in sandbox.files
+    assert "HTTP 200" in capsys.readouterr().err
+    assert sandbox.deleted and client.closed and credential.closed
+
+
 def test_sandbox_token_failure_is_reported_and_compute_is_cleaned_up() -> None:
     class FailingSandbox(FakeSandbox):
         async def exec(self, command: str, **kwargs: Any) -> ExecResult:
