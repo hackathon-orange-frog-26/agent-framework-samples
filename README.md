@@ -7,7 +7,7 @@ Samples for building AI agents with [Microsoft Agent Framework](https://learn.mi
 
 | Path | Description |
 | --- | --- |
-| [`.devcontainer/`](.devcontainer) | Codespaces/devcontainer environment with Python, Azure CLI, Bicep, .NET 8 SDK, and the Agent 365 CLI (`a365`), ready to work with Azure and Microsoft Foundry. |
+| [`.devcontainer/`](.devcontainer) | Codespaces/devcontainer environment with Python, Azure CLI, Bicep, .NET 8 SDK, PowerShell 7+, and the Agent 365 CLI (`a365`), ready to work with Azure and Microsoft Foundry. |
 | [`infra/`](infra) | Bicep IaC (using the [Azure Verified Module `avm/res/cognitive-services/account`](https://github.com/Azure/bicep-registry-modules/tree/main/avm/res/cognitive-services/account)) that deploys a Microsoft Foundry account with a GPT-5 model deployment and an AI Foundry project, plus an optional Azure Container Apps sandbox group. |
 | [`samples/prompt-agent/`](samples/prompt-agent) | A minimal prompt agent that sends one prompt to a Microsoft Foundry model and prints the response. |
 | [`samples/mslearn-prompt-agent/`](samples/mslearn-prompt-agent) | A persistent Foundry prompt agent with Microsoft Learn MCP tools, designed for comparison with the hosted-agent sample. |
@@ -24,7 +24,7 @@ Samples for building AI agents with [Microsoft Agent Framework](https://learn.mi
 
 ## Getting started
 
-1. Open this repository in a [GitHub Codespace](https://docs.github.com/en/codespaces) (or reopen it in VS Code's Dev Containers) to get Python, the Azure CLI, Bicep, and the Agent 365 CLI (`a365`) pre-installed.
+1. Open this repository in a [GitHub Codespace](https://docs.github.com/en/codespaces) (or reopen it in VS Code's Dev Containers) to get Python, the Azure CLI, Bicep, PowerShell 7+, and the Agent 365 CLI (`a365`) pre-installed.
 2. Deploy the Microsoft Foundry environment described in [`infra/README.md`](infra/README.md).
 3. Run a sample:
    - [`samples/prompt-agent/README.md`](samples/prompt-agent/README.md)
@@ -42,6 +42,10 @@ Samples for building AI agents with [Microsoft Agent Framework](https://learn.mi
 
 ### Agent 365 CLI in Codespaces
 
+The devcontainer includes the latest stable [PowerShell 7+](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell)
+and the VS Code PowerShell extension. Run `pwsh` to start PowerShell; Bash remains
+the default terminal shell.
+
 The devcontainer installs the .NET 8 SDK and installs or updates
 [`Microsoft.Agents.A365.DevTools.Cli`](https://learn.microsoft.com/microsoft-agent-365/developer/agent-365-cli)
 as a global tool for the default `vscode` user during post-create setup.
@@ -52,6 +56,7 @@ For an existing Codespace, run **Codespaces: Rebuild Container** from the Comman
 terminal and verify:
 
 ```bash
+pwsh --version
 a365 --help
 ```
 

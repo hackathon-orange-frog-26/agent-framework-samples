@@ -33,8 +33,8 @@ if [ -f /etc/apt/sources.list.d/yarn.list ]; then
     | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/yarn-archive-keyring.gpg
 fi
 
-echo "==> Installing the latest Azure CLI"
-curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+# echo "==> Installing the latest Azure CLI"
+# curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
 echo "==> Installing the latest Bicep CLI"
 az bicep install
