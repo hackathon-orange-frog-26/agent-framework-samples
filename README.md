@@ -7,7 +7,7 @@ Samples for building AI agents with [Microsoft Agent Framework](https://learn.mi
 
 | Path | Description |
 | --- | --- |
-| [`.devcontainer/`](.devcontainer) | Codespaces/devcontainer environment with Python, Azure CLI, and Bicep, ready to work with Azure and Microsoft Foundry. |
+| [`.devcontainer/`](.devcontainer) | Codespaces/devcontainer environment with Python, Azure CLI, Bicep, .NET 8 SDK, PowerShell 7+, and the Agent 365 CLI (`a365`), ready to work with Azure and Microsoft Foundry. |
 | [`infra/`](infra) | Bicep IaC (using the [Azure Verified Module `avm/res/cognitive-services/account`](https://github.com/Azure/bicep-registry-modules/tree/main/avm/res/cognitive-services/account)) that deploys a Microsoft Foundry account with a GPT-5 model deployment and an AI Foundry project, plus an optional Azure Container Apps sandbox group. |
 | [`samples/prompt-agent/`](samples/prompt-agent) | A minimal prompt agent that sends one prompt to a Microsoft Foundry model and prints the response. |
 | [`samples/mslearn-prompt-agent/`](samples/mslearn-prompt-agent) | A persistent Foundry prompt agent with Microsoft Learn MCP tools, designed for comparison with the hosted-agent sample. |
@@ -19,11 +19,12 @@ Samples for building AI agents with [Microsoft Agent Framework](https://learn.mi
 | [`samples/conditional-workflow/`](samples/conditional-workflow) | A multi-step content workflow (planner → writer → reviewer) with a conditional revision branch and deterministic tests. |
 | [`samples/sandbox-code-agent-evals/`](samples/sandbox-code-agent-evals) | An agent that writes and runs Python inside an [Azure Container Apps sandbox](https://learn.microsoft.com/en-us/azure/container-apps/sandboxes-overview), scored with Microsoft Foundry's evaluation service and a CI quality gate. |
 | [`samples/sandbox-hosted-agent/`](samples/sandbox-hosted-agent) | A launcher that executes the Agent Framework process itself inside an ephemeral Azure Container Apps sandbox. |
+| [`samples/agent365-identity-agent/`](samples/agent365-identity-agent) | Builds on the sandbox-hosted agent: creates and manages a Microsoft Entra agent identity blueprint and agent identities for [Microsoft Agent 365](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-sdk), then runs the sandboxed agent as that identity, with the Agent 365 SDK resolving its identity. |
 | [`samples/mslearn-hosted-agent/`](samples/mslearn-hosted-agent) | A Foundry-backed agent with Microsoft Learn MCP tools, using the same agent code as a local CLI, local Responses API, or ZIP-deployed Foundry hosted agent without a container registry. |
 
 ## Getting started
 
-1. Open this repository in a [GitHub Codespace](https://docs.github.com/en/codespaces) (or reopen it in VS Code's Dev Containers) to get Python, the Azure CLI, and Bicep pre-installed.
+1. Open this repository in a [GitHub Codespace](https://docs.github.com/en/codespaces) (or reopen it in VS Code's Dev Containers) to get Python, the Azure CLI, Bicep, PowerShell 7+, and the Agent 365 CLI (`a365`) pre-installed.
 2. Deploy the Microsoft Foundry environment described in [`infra/README.md`](infra/README.md).
 3. Run a sample:
    - [`samples/prompt-agent/README.md`](samples/prompt-agent/README.md)
@@ -36,4 +37,37 @@ Samples for building AI agents with [Microsoft Agent Framework](https://learn.mi
    - [`samples/conditional-workflow/README.md`](samples/conditional-workflow/README.md)
    - [`samples/sandbox-code-agent-evals/README.md`](samples/sandbox-code-agent-evals/README.md)
    - [`samples/sandbox-hosted-agent/README.md`](samples/sandbox-hosted-agent/README.md)
+   - [`samples/agent365-identity-agent/README.md`](samples/agent365-identity-agent/README.md)
    - [`samples/mslearn-hosted-agent/README.md`](samples/mslearn-hosted-agent/README.md)
+
+### Agent 365 CLI in Codespaces
+
+The devcontainer includes the latest stable [PowerShell 7+](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell)
+and the VS Code PowerShell extension. Run `pwsh` to start PowerShell; Bash remains
+the default terminal shell.
+
+The devcontainer installs the .NET 8 SDK and installs or updates
+[`Microsoft.Agents.A365.DevTools.Cli`](https://learn.microsoft.com/microsoft-agent-365/developer/agent-365-cli)
+as a global tool for the default `vscode` user during post-create setup.
+Its tool directory (`/home/vscode/.dotnet/tools`) is included in `PATH`.
+
+For an existing Codespace, run **Codespaces: Rebuild Container** from the Command Palette
+(or **Dev Containers: Rebuild Container** locally). After setup completes, open a new
+terminal and verify:
+
+```bash
+pwsh --version
+a365 --help
+```
+
+To install or update the CLI manually once the .NET SDK is available:
+
+```bash
+dotnet tool update --global Microsoft.Agents.A365.DevTools.Cli
+export PATH="$PATH:$HOME/.dotnet/tools"
+a365 --help
+```
+
+Installation does not authenticate or register an agent. Follow the
+[Agent 365 registry instructions](samples/agent365-identity-agent/README.md#agent-365-registry)
+for the identity sample.

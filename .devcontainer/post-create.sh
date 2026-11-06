@@ -2,7 +2,7 @@
 # Runs once after the devcontainer is created.
 # Installs Python dependencies for the samples in this repository and
 # upgrades the Azure CLI extensions/tools that are handy when working
-# with Azure and Microsoft Foundry.
+# with Azure and Microsoft Foundry, and installs the Agent 365 CLI.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,11 +33,18 @@ if [ -f /etc/apt/sources.list.d/yarn.list ]; then
     | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/yarn-archive-keyring.gpg
 fi
 
-echo "==> Installing the latest Azure CLI"
-curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+# echo "==> Installing the latest Azure CLI"
+# curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
 echo "==> Installing the latest Bicep CLI"
 az bicep install
+
+echo "==> Installing or updating the Agent 365 CLI"
+dotnet tool update --global Microsoft.Agents.A365.DevTools.Cli
+export PATH="${PATH}:${HOME}/.dotnet/tools"
+
+echo "==> Verifying the Agent 365 CLI"
+a365 --help
 
 echo "==> Azure CLI / Bicep versions"
 az version
