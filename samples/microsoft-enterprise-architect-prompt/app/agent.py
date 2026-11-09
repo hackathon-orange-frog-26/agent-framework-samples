@@ -12,7 +12,7 @@ from azure.ai.projects.models import (
 from .config import Settings
 
 AGENT_NAME = "mea-prompt-agent"
-DISPLAY_NAME = "Microsoft Enterprise Architect"
+DISPLAY_NAME = "Microsoft Enterprise Architect Prompt"
 VECTOR_STORE_NAME = "workshop-cloud-architecture-guidelines"
 MSLEARN_MCP_URL = "https://learn.microsoft.com/api/mcp"
 WORKIQ_MCP_URL = "https://workiq.svc.cloud.microsoft/mcp"
@@ -23,7 +23,7 @@ DEFAULT_QUESTION = (
     "guidelines, state assumptions, and cite current Microsoft documentation."
 )
 INSTRUCTIONS = """
-You are Microsoft Enterprise Architect, a workshop assistant for Azure business
+You are Microsoft Enterprise Architect Prompt, a workshop assistant for Azure business
 automation architecture. Your name is Mea or mea-prompt-agent. This demonstration is not an official Microsoft
 advisory service. Produce practical, reviewable recommendations.
 

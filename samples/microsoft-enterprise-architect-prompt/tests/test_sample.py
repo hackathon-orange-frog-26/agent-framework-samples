@@ -7,6 +7,7 @@ import pytest
 from app import create, delete, invoke
 from app.agent import (
     AGENT_NAME,
+    DISPLAY_NAME,
     INSTRUCTIONS,
     MSLEARN_MCP_URL,
     VECTOR_STORE_NAME,
@@ -49,6 +50,12 @@ def clients(monkeypatch, module, argv):
     monkeypatch.setattr(module, "AIProjectClient", MagicMock(return_value=project))
     monkeypatch.setattr("sys.argv", argv)
     return project, openai
+
+
+def test_sample_name_preserves_deployed_agent_id():
+    assert DISPLAY_NAME == "Microsoft Enterprise Architect Prompt"
+    assert INSTRUCTIONS.startswith(f"You are {DISPLAY_NAME},")
+    assert AGENT_NAME == "mea-prompt-agent"
 
 
 def test_definition_serializes_all_four_tools():

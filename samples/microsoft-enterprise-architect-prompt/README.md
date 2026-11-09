@@ -1,7 +1,7 @@
-# Microsoft Enterprise Architect workshop
+# Microsoft Enterprise Architect Prompt
 
 A separate, persistent **Foundry prompt agent** displayed in Teams as
-**Microsoft Enterprise Architect**. It adapts the lifecycle and evidence-based
+**Microsoft Enterprise Architect Prompt**. It adapts the lifecycle and evidence-based
 instructions from the [enterprise architect sample](../enterprise-architect-prompt-agent)
 and reuses its fictional policy files. It does **not** modify that agent, depend
 on its A2A deployment, or share its vector store.
@@ -82,7 +82,7 @@ an arbitrary action tool.
 ## Configure and create
 
 ```bash
-cd samples/microsoft-enterprise-architect-workshop
+cd samples/microsoft-enterprise-architect-prompt
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -145,11 +145,12 @@ Microsoft 365 data. Adding the agent to Teams does not grant mailbox access.
 
 1. Create the agent and complete the facilitator guide in the Foundry playground.
    Inspect all four tools, the Work IQ allowlist, and its OAuth connection.
-2. Open `microsoft-enterprise-architect-workshop` in the Foundry portal. Under
+2. Open `mea-prompt-agent` in the Foundry portal (the unchanged default agent ID).
+   Under
    **Details > Agent configuration > Active version**, pin the tested version.
    Avoid **Always use latest** during a workshop.
 3. Select **Publish > Teams and Microsoft Copilot**. Set the name to
-   **Microsoft Enterprise Architect**, publish version `1.0.0`, developer
+   **Microsoft Enterprise Architect Prompt**, publish version `1.0.0`, developer
    metadata, and a description such as "Workshop Azure architecture assistant;
    read-only work context; does not execute Azure changes or send messages."
 4. Choose **Direct publish > Just you** first. Foundry generates the Teams
@@ -237,7 +238,7 @@ allows you to set it. If the flow generates the name, inspect the rejected name
 and shorten its configurable base name, leaving room for any generated suffix.
 Do not treat the 64-character resource limit as a Teams display-name or manifest
 field limit; those are separate validations. Keep **Microsoft Enterprise
-Architect** as the user-facing name when supported. For other publishing
+Architect Prompt** as the user-facing name when supported. For other publishing
 validation errors, follow the
 [Foundry publishing troubleshooting guide](https://learn.microsoft.com/azure/foundry/agents/how-to/troubleshoot-publish-copilot).
 

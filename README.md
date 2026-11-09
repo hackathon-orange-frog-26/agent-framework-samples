@@ -12,7 +12,7 @@ Samples for building AI agents with [Microsoft Agent Framework](https://learn.mi
 | [`samples/prompt-agent/`](samples/prompt-agent) | A minimal prompt agent that sends one prompt to a Microsoft Foundry model and prints the response. |
 | [`samples/mslearn-prompt-agent/`](samples/mslearn-prompt-agent) | A persistent Foundry prompt agent with Microsoft Learn MCP tools, designed for comparison with the hosted-agent sample. |
 | [`samples/enterprise-architect-prompt-agent/`](samples/enterprise-architect-prompt-agent) | An enterprise architect prompt agent using A2A to consult the Microsoft Learn agent and Foundry file search for internal architecture guidelines. |
-| [`samples/microsoft-enterprise-architect-workshop/`](samples/microsoft-enterprise-architect-workshop) | A separate Microsoft Enterprise Architect workshop prompt agent with web search, Microsoft Learn MCP, read-only Work IQ Mail/Teams/Calendar, Foundry files, safety exercises, and native Teams publishing. |
+| [`samples/microsoft-enterprise-architect-prompt/`](samples/microsoft-enterprise-architect-prompt) | Microsoft Enterprise Architect Prompt: a separate prompt agent with web search, Microsoft Learn MCP, read-only Work IQ Mail/Teams/Calendar, Foundry files, safety exercises, and native Teams publishing. |
 | [`samples/ai-search-rag/`](samples/ai-search-rag) | Classic AI Search RAG: upload the shared architecture guidelines to existing Blob Storage, configure and run an integrated-vectorization indexer, then retrieve chunks and generate grounded answers. |
 | [`samples/foundry-iq/`](samples/foundry-iq) | Foundry IQ: reuse the classic Search index and combine internal guidelines, live Microsoft Learn MCP, and web knowledge sources in one knowledge base consumed by a prompt agent. |
 | [`samples/architecture-review-workflow/`](samples/architecture-review-workflow) | An explicit Agent Framework workflow: existing enterprise architect draft, independent Microsoft Learn A2A 1.0 review, and architect final recommendation. |
@@ -31,7 +31,7 @@ Samples for building AI agents with [Microsoft Agent Framework](https://learn.mi
    - [`samples/prompt-agent/README.md`](samples/prompt-agent/README.md)
    - [`samples/mslearn-prompt-agent/README.md`](samples/mslearn-prompt-agent/README.md)
    - [`samples/enterprise-architect-prompt-agent/README.md`](samples/enterprise-architect-prompt-agent/README.md)
-   - [`samples/microsoft-enterprise-architect-workshop/README.md`](samples/microsoft-enterprise-architect-workshop/README.md)
+   - [`samples/microsoft-enterprise-architect-prompt/README.md`](samples/microsoft-enterprise-architect-prompt/README.md)
    - [`samples/ai-search-rag/README.md`](samples/ai-search-rag/README.md)
    - [`samples/foundry-iq/README.md`](samples/foundry-iq/README.md)
    - [`samples/architecture-review-workflow/README.md`](samples/architecture-review-workflow/README.md)
