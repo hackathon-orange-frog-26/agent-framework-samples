@@ -188,6 +188,59 @@ version; changing the active agent version does not require a new Teams package.
 See the [publishing guide](https://learn.microsoft.com/azure/foundry/agents/how-to/publish-copilot)
 for current UI and authorization details.
 
+## Troubleshooting
+
+### Work IQ: caller tenant has no billing policy
+
+If the Foundry playground or Teams returns
+`The caller tenant does not have a billing policy configured for WorkIQ.`,
+configure billing in the Microsoft 365 tenant used by the Work IQ OAuth
+connection. This sample calls the **Work IQ MCP API**, which uses **Copilot
+Credits usage-based billing**. Paying for the Foundry project or assigning a
+Microsoft 365 Copilot license alone does not configure Work IQ API billing.
+Connector-specific licensing is a separate requirement for connector-backed
+tools.
+
+Ask your Microsoft 365 billing/tenant administrator to:
+
+1. Open **Microsoft 365 admin center > Copilot > Cost management**.
+2. Configure usage-based billing and create or update a spending policy covering
+   **Work IQ API**. Configure its funding source; pay-as-you-go requires an Azure
+   subscription and resource group.
+3. Include the **user signing into Work IQ from Foundry or Teams** in the policy
+   and ensure that spending allowance is available. If using the Copilot Studio
+   billing-plan setup path, assign that user to the billing plan.
+4. Confirm the policy applies to the tenant in the connection's OAuth
+   authorization/token URLs, not merely the subscription hosting Foundry.
+
+Once the policy is active, retry the request. If needed, reconnect Work IQ and
+sign in as the covered user. An agent redeployment is not normally required.
+See [Work IQ tenant enablement](https://learn.microsoft.com/microsoft-365/copilot/extensibility/work-iq/enable-work-iq)
+and [Copilot Credits billing and cost management](https://learn.microsoft.com/microsoft-365/copilot/usage-based-billing-overview-copilot-credits).
+
+To continue the workshop without Work IQ, run
+`python -m app.create --without-workiq` and select the newly created version in
+Foundry. Public research and internal-guideline retrieval remain available;
+mail, Teams, and calendar retrieval do not.
+
+### Bot channel/resource name is too long
+
+If Teams publishing rejects the bot channel registration/resource name, check
+the **Azure Bot resource name**, not just the Teams display name. The documented
+`Microsoft.BotService/botServices` name limit is **2-64 characters**, inclusive.
+It must start with an ASCII letter or digit; subsequent characters can be ASCII
+letters, digits, underscores, periods, or hyphens. Spaces are not allowed.
+See the [Azure Bot resource naming constraints](https://learn.microsoft.com/azure/templates/microsoft.botservice/botservices#property-values).
+
+Use a short resource name such as `ea-workshop-bot` where the publishing flow
+allows you to set it. If the flow generates the name, inspect the rejected name
+and shorten its configurable base name, leaving room for any generated suffix.
+Do not treat the 64-character resource limit as a Teams display-name or manifest
+field limit; those are separate validations. Keep **Microsoft Enterprise
+Architect** as the user-facing name when supported. For other publishing
+validation errors, follow the
+[Foundry publishing troubleshooting guide](https://learn.microsoft.com/azure/foundry/agents/how-to/troubleshoot-publish-copilot).
+
 ## Safety boundaries
 
 The Work IQ **tool allowlist** and tenant-side policy prevent the exposed agent
