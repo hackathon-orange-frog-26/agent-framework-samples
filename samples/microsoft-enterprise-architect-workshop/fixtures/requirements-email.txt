@@ -1,0 +1,14 @@
+Fictional workshop fixture. Send only to test users.
+Subject: Workshop - Invoice Automation Requirements
+
+Design supplier invoice automation for Contoso Demo:
+- Process 10,000 invoices each business day, with a peak of 50 per minute.
+- Receive PDF invoices, extract fields, validate against ERP purchase orders,
+  route exceptions to a human, and write approved records back to the ERP.
+- Require two separate approvers for invoices above EUR 10,000.
+- Prevent duplicate payments and retain an auditable approval history.
+- Classify invoice data as internal synthetic data in this workshop.
+- Treat the production design as tier 1: RTO one hour and RPO 15 minutes.
+- Keep data services private; use managed identities where supported.
+- Target EUR 5,000 per month initially; state pricing assumptions and tradeoffs.
+- Do not deploy resources or send approval notifications during the demo.

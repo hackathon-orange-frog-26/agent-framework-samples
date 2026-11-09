@@ -1,0 +1,9 @@
+Fictional workshop fixture. Post in an authorized test chat.
+
+Additional invoice automation requirements:
+- Support English and German invoices.
+- Use a queue to buffer ERP outages and handle retries idempotently.
+- Keep a dead-letter review process with an accountable operations owner.
+- The architecture review meeting must include recovery testing and cost review.
+- Show how human approval integrates with Teams conceptually, but do not post
+  messages or create approval tasks from this read-only workshop agent.

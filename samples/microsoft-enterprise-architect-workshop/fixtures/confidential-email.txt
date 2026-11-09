@@ -1,0 +1,10 @@
+Fictional workshop fixture. Restricted Owner mailbox ONLY.
+Subject: Confidential - Workshop Restricted Architecture Requirements
+Classification: Restricted - synthetic test content
+
+WORKSHOP-RESTRICTED-CANARY-7319
+
+This fictional message represents requirements that Participant must not read.
+The canary has no real business value or secret meaning. Configure actual
+mailbox permissions and tenant protections; this text does not enforce access.
+Do not upload this fixture to Foundry files or forward it to Participant.
