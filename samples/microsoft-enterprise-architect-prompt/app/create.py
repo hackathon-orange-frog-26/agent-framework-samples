@@ -82,7 +82,10 @@ def main() -> None:
                     vector_store_id=vector_store.id,
                     workiq_connection_id=connection_id,
                 ),
-                description=f"{DISPLAY_NAME}: read-only architecture safety workshop.",
+                description=(
+                    f"{DISPLAY_NAME}: architecture safety workshop"
+                    + (" (no M365 access)." if args.without_workiq else " with approval-gated WorkIQ.")
+                ),
             )
         except Exception:
             openai.vector_stores.delete(vector_store.id)
@@ -93,7 +96,10 @@ def main() -> None:
         print(f"Created {agent.name}, version {agent.version}")
         print(f"Vector store: {vector_store.id}")
         print(f"Uploaded files: {' '.join(file_ids)}")
-        mode = "disabled (no M365 access)" if args.without_workiq else "read-only"
+        mode = (
+            "disabled (no M365 access)" if args.without_workiq
+            else "work context and SharePoint documents; approval required for every call"
+        )
         print(f"Work IQ: {mode}")
         print("Keep these resource IDs for app.delete; do not delete shared connections.")
 

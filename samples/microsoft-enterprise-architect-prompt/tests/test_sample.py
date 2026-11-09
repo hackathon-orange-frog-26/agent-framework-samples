@@ -12,6 +12,7 @@ from app.agent import (
     MSLEARN_MCP_URL,
     VECTOR_STORE_NAME,
     WORKIQ_MCP_URL,
+    WORKIQ_TOOLS,
     create_definition,
 )
 from app.config import Settings, get_settings
@@ -82,8 +83,8 @@ def test_definition_serializes_all_four_tools():
             "server_label": "WorkIQ",
             "server_url": WORKIQ_MCP_URL,
             "project_connection_id": "/connections/workiq",
-            "allowed_tools": ["fetch", "get_schema"],
-            "require_approval": "never",
+            "allowed_tools": list(WORKIQ_TOOLS),
+            "require_approval": "always",
         },
     ]
 
@@ -94,6 +95,51 @@ def test_without_workiq_omits_m365_tool():
     ).as_dict()
     assert len(definition["tools"]) == 3
     assert all(tool.get("server_label") != "WorkIQ" for tool in definition["tools"])
+
+
+def test_workiq_includes_document_tools_and_requires_approval_by_default():
+    definition = create_definition(
+        SETTINGS,
+        vector_store_id="vs_workshop",
+        workiq_connection_id="/connections/workiq",
+    ).as_dict()
+    assert definition["instructions"] == INSTRUCTIONS
+    assert len(definition["tools"]) == 4
+    workiq_tools = [
+        tool for tool in definition["tools"] if tool.get("server_url") == WORKIQ_MCP_URL
+    ]
+    assert workiq_tools == [{
+        "type": "mcp",
+        "server_label": "WorkIQ",
+        "server_url": WORKIQ_MCP_URL,
+        "project_connection_id": "/connections/workiq",
+        "allowed_tools": list(WORKIQ_TOOLS),
+        "require_approval": "always",
+    }]
+    assert len(WORKIQ_TOOLS) == len(set(WORKIQ_TOOLS))
+    assert {"fetch", "get_schema"}.issubset(WORKIQ_TOOLS)
+    assert not {"ask", "update_entity", "delete_entity"}.intersection(WORKIQ_TOOLS)
+
+
+def test_create_resolves_only_workiq_connection_with_document_tools(monkeypatch, capsys):
+    project, _ = clients(monkeypatch, create, ["create"])
+    create.main()
+    project.connections.get.assert_called_once_with("workshop-workiq-mcp")
+    tools = project.agents.create_version.call_args.kwargs["definition"].as_dict()["tools"]
+    assert len(tools) == 4
+    assert tools[-1]["server_label"] == "WorkIQ"
+    assert tools[-1]["project_connection_id"] == "/connections/workiq"
+    assert tools[-1]["allowed_tools"] == list(WORKIQ_TOOLS)
+    assert "approval required" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("module", [create, invoke])
+def test_cli_has_no_sharepoint_specific_options(monkeypatch, capsys, module):
+    clients(monkeypatch, module, ["sample", "--help"])
+    with pytest.raises(SystemExit) as exc:
+        module.main()
+    assert exc.value.code == 0
+    assert "sharepoint" not in capsys.readouterr().out.lower()
 
 
 def test_reuses_only_original_policy_files_not_workshop_fixtures():
@@ -279,6 +325,106 @@ def test_debug_is_explicit_and_writes_response_to_stderr(monkeypatch, capsys):
     assert output.err == '{"output":[]}\n'
 
 
+def approval_request(*, name="create_entity", server="WorkIQ", request_id="approval_1"):
+    return SimpleNamespace(
+        type="mcp_approval_request", id=request_id, server_label=server, name=name,
+        arguments='{"parentUrl":"/sharepoint/workshop","jsonBody":{"name":"design"}}',
+    )
+
+
+@pytest.mark.parametrize("answer,approved", [("y", True), ("n", False), ("", False)])
+def test_workiq_approval_is_explicit_and_continues_same_conversation(
+    monkeypatch, capsys, answer, approved
+):
+    _, openai = clients(monkeypatch, invoke, ["invoke", "--review-workiq-tools"])
+    openai.responses.create.side_effect = [
+        SimpleNamespace(status="completed", output=[approval_request()]),
+        SimpleNamespace(status="completed", output_text="Reviewed result", output=[]),
+    ]
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda: answer)
+    invoke.main()
+    assert openai.responses.create.call_args.kwargs == {
+        "conversation": "conv_workshop",
+        "input": [{
+            "type": "mcp_approval_response", "approve": approved,
+            "approval_request_id": "approval_1",
+        }],
+        "tool_choice": "auto",
+        "extra_body": {"agent_reference": {"name": AGENT_NAME, "type": "agent_reference"}},
+    }
+    output = capsys.readouterr()
+    assert "parentUrl" in output.err and "WorkIQ tool: create_entity" in output.err
+    assert output.out == "Reviewed result\n"
+    openai.conversations.delete.assert_called_once()
+
+
+@pytest.mark.parametrize("server,name,interactive", [
+    ("SharePoint", "create_entity", True),
+    ("MicrosoftLearn", "fetch", True),
+    ("WorkIQ", "delete_entity", True),
+    ("WorkIQ", "create_entity", False),
+])
+def test_review_rejects_unexpected_tools_and_noninteractive_approval(
+    monkeypatch, server, name, interactive
+):
+    _, openai = clients(monkeypatch, invoke, ["invoke", "--review-workiq-tools"])
+    openai.responses.create.return_value.output = [approval_request(name=name, server=server)]
+    monkeypatch.setattr("sys.stdin.isatty", lambda: interactive)
+    read_input = MagicMock()
+    monkeypatch.setattr("builtins.input", read_input)
+    with pytest.raises(RuntimeError, match="Unexpected MCP approval|interactive terminal"):
+        invoke.main()
+    read_input.assert_not_called()
+    assert openai.responses.create.call_count == 1
+    openai.conversations.delete.assert_called_once()
+
+
+def test_multiple_workiq_approval_rounds_and_call_ids(monkeypatch):
+    _, openai = clients(monkeypatch, invoke, ["invoke", "--review-workiq-tools"])
+    openai.responses.create.side_effect = [
+        SimpleNamespace(status="completed", output=[approval_request(name="get_schema")]),
+        SimpleNamespace(status="completed", output=[
+            approval_request(request_id="approval_2"),
+            approval_request(name="fetch", request_id="approval_3"),
+        ]),
+        SimpleNamespace(status="completed", output=[], output_text="Done"),
+    ]
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["y", "y", "n"])
+    monkeypatch.setattr("builtins.input", lambda: next(answers))
+    invoke.main()
+    calls = openai.responses.create.call_args_list
+    assert len(calls) == 3
+    assert [
+        (item["approval_request_id"], item["approve"])
+        for item in calls[2].kwargs["input"]
+    ] == [("approval_2", True), ("approval_3", False)]
+
+
+def test_workiq_approval_round_limit_cleans_conversation(monkeypatch):
+    _, openai = clients(monkeypatch, invoke, ["invoke", "--review-workiq-tools"])
+    openai.responses.create.return_value.output = [approval_request()]
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda: "n")
+    with pytest.raises(RuntimeError, match="round limit"):
+        invoke.main()
+    openai.conversations.delete.assert_called_once()
+
+
+def test_workiq_accepts_completion_at_approval_round_limit(monkeypatch):
+    _, openai = clients(monkeypatch, invoke, ["invoke", "--review-workiq-tools"])
+    openai.responses.create.side_effect = [
+        *[SimpleNamespace(status="completed", output=[approval_request()]) for _ in range(20)],
+        SimpleNamespace(status="completed", output=[], output_text="Done"),
+    ]
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda: "n")
+    invoke.main()
+    assert openai.responses.create.call_count == 21
+    openai.conversations.delete.assert_called_once()
+
+
 @pytest.mark.parametrize("delete_data", [True, False])
 def test_delete_only_explicit_resources(monkeypatch, delete_data):
     argv = ["delete", "--version", "1"]
@@ -315,3 +461,9 @@ def test_settings_defaults_and_whitespace(monkeypatch):
     assert settings.project_endpoint == SETTINGS.project_endpoint
     assert settings.model_deployment == "gpt-5.3-codex-2"
     assert settings.workiq_connection_name == ""
+
+
+def test_settings_workiq_connection_whitespace(monkeypatch):
+    monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", SETTINGS.project_endpoint)
+    monkeypatch.setenv("WORKIQ_CONNECTION_NAME", " workshop-workiq-mcp ")
+    assert get_settings().workiq_connection_name == "workshop-workiq-mcp"

@@ -10,7 +10,7 @@ on its A2A deployment, or share its vector store.
 | --- | --- | --- |
 | Web search | Current public context and source-quality exercises | Foundry `WebSearchTool`; no separate Bing connection |
 | Microsoft Learn MCP | Validate Azure service claims with official documentation | Public `https://learn.microsoft.com/api/mcp` |
-| Work IQ MCP | Read the signed-in user's Outlook Mail, Calendar, and Teams context | Delegated OAuth project connection; only `fetch` and `get_schema` exposed |
+| Work IQ MCP | Read the signed-in user's Outlook Mail, Calendar, Teams, and SharePoint context; create supported SharePoint documents/templates | One delegated OAuth project connection; runtime schema discovery; approval required for **every WorkIQ call** |
 | Foundry files | Internal architecture standards | A new vector store populated from the original sample's `internal-guidelines/*.md` |
 
 ```text
@@ -20,10 +20,13 @@ CLI / Foundry playground / Teams personal chat
            /       |       \            \
      Web search   Learn    Work IQ     File search
                          /   |   \     shared policy
-                       Mail Teams Calendar (read-only)
+                      Mail Teams Calendar
+                       + SharePoint
 ```
 
-This is a **safe-by-default workshop**, not a demonstration that actually deletes
+WorkIQ includes document retrieval and creation without a separate SharePoint
+flag. All WorkIQ calls require approval; creation also requires tenant consent,
+policy, and source permissions. This is a **safe-by-default workshop**, not a demonstration that actually deletes
 meetings, sends misinformation, compromises Azure, or bypasses confidentiality.
 The [facilitator guide](WORKSHOP.md) covers every requested interaction, expected
 outcomes, and evidence to collect.
@@ -52,32 +55,118 @@ Follow the [Foundry Work IQ MCP quickstart](https://learn.microsoft.com/microsof
 Use the **MCP** endpoint, not the older `work_iq_preview` A2A tool:
 
 1. Have an Entra administrator provision Work IQ if needed, configure a
-   single-tenant app, add delegated `WorkIQAgent.Ask`, and grant admin consent.
+   single-tenant app, add delegated `WorkIQAgent.Ask` and `WorkIQ.Act`, and grant
+   admin consent. `WorkIQ.Act` includes SharePoint read access and is required
+   for creation; `WorkIQAgent.Ask` alone hides `/sharepoint` paths.
    Store its client secret only in the Foundry connection, never in this sample.
 2. In your Foundry project, open **Tools > Connect a tool > Catalog**, select
    **Work IQ MCP**, and create `workshop-workiq-mcp` targeting
    `https://workiq.svc.cloud.microsoft/mcp`.
 3. Configure delegated OAuth using the app's client ID and secret, tenant-specific
    authorization/token URLs, and
-   `api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask offline_access`.
+   the space-separated scopes:
+
+   ```text
+   api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask api://workiq.svc.cloud.microsoft/WorkIQ.Act offline_access
+   ```
+
    Copy Foundry's generated redirect URI into the app's **Web** redirect URIs.
-4. Keep Work IQ tenant policy's mutation operations blocked. Inspect the current
+4. Inspect the current
    [tool reference](https://learn.microsoft.com/microsoft-365/copilot/extensibility/work-iq/mcp/tool-reference)
-   and confirm `fetch` and `get_schema` are available. This sample's exact
-   allowlist excludes `create_entity`, `update_entity`, `delete_entity`,
-   `do_action`, and delegated natural-language `ask`.
+   and confirm the seven allowlisted tools below are available. `ask`,
+   `update_entity`, and `delete_entity` are not exposed. All allowlisted calls,
+   including reads and discovery, require approval.
 5. Test sign-in/consent using each participant's **own** user identity. Do not
    share the facilitator's authorized session or use application-only access.
    Azure CLI sign-in authorizes Foundry calls; it does not by itself complete
    Work IQ OAuth consent.
+   For an existing connection, add `WorkIQ.Act` to the same app/connection,
+   grant admin consent, and reconnect each user to refresh cached scopes.
+6. Create a disposable SharePoint workshop site and document library. Grant
+   the participant read access to source documents and contribute access to
+   the intended output folder. OAuth scopes never grant access beyond the
+   signed-in user's SharePoint permissions. Use synthetic data only.
+7. An administrator must review **Microsoft 365 admin center > Agents > Tools >
+   Work IQ MCP > Policy**. Mutations are blocked by default. Allow supported
+   creation only under an approved workshop policy. Current preview controls
+   are **tenant-wide**, not per-app/per-agent; changes can take up to 24 hours.
+   Do not disable tenant guardrails in a production tenant to make the sample
+   work. If creation cannot safely be allowed, leave it blocked and test reads
+   and explicit policy-denied creation instead.
 
-Mail, Teams, and Calendar are resource paths on this single Work IQ MCP server,
-not three hand-written Graph clients. `fetch` reads `/me/messages`, `/me/events`,
+Mail, Teams, Calendar, and SharePoint are resource paths on this single Work IQ
+MCP server, not separate tools or hand-written Graph clients.
+`fetch` reads `/me/messages`, `/me/events`,
 and `/me/chats/{id}/messages`; `get_schema` discovers the supported read schema.
 Tenant policy may further limit paths/properties. Reads are deliberately bounded,
 not a full-mailbox semantic search. If a desired query isn't supported, supply
 the test message/chat identifier rather than broadening permissions or enabling
 an arbitrary action tool.
+
+## Document retrieval and creation through Work IQ
+
+This Foundry prompt agent already uses delegated OAuth; no authentication-mode
+switch, Agent 365 registration, `a365` CLI, or `ToolingManifest.json` is needed.
+SharePoint uses the **same WorkIQ MCP tool, endpoint, OAuth app, and project
+connection** as Mail, Calendar, and Teams, not a second MCP tool or the deprecated
+SharePoint/OneDrive MCP server.
+
+The standard agent has four tools, including just **one WorkIQ MCP tool** with
+document retrieval/creation included. `--without-workiq` omits all M365 access.
+Creation validates the single connection target before allocating files/vector
+stores; scope, consent, user access, and tenant policy must still be verified live.
+
+### Retrieve and create documents
+
+Use the printed version and replace the placeholders with your workshop site,
+library, folder, and source document. The CLI pauses for **each** exact
+WorkIQ call, including Mail/Calendar/Teams reads and SharePoint discovery;
+review the arguments, then type
+`y` to approve or press Enter to deny. It requires an interactive terminal and
+never auto-approves.
+
+```bash
+python -m app.invoke --version <new-version> --review-workiq-tools \
+  "In SharePoint site <site-url>, library <library>, retrieve <document-id> and summarize the architecture requirements. Cite the source."
+python -m app.invoke --version <new-version> --review-workiq-tools \
+  "Discover supported document creation in <site-url>, library <library>, folder <folder>. Create a NEW Architecture Review document/template with this synthetic content: Invoice automation review; owner Workshop Team. Do not overwrite or share anything."
+```
+
+The consolidated WorkIQ tool exposes `search_paths`, `get_schema`, `fetch`, `fetch_blob`,
+`call_function`, `create_entity`, and `do_action`. Paths and schemas under
+`/sharepoint` must be discovered at runtime; they are not fixed Graph upload
+APIs. `ask`, `update_entity`, and `delete_entity` are not exposed. Mail, Calendar,
+and Teams remain read-only by instruction; creation/action tools are intended
+only for supported SharePoint document creation.
+
+**Preview limitation:** document creation depends on the operations your live
+schema exposes (for example, document templates with submission forms).
+File-transfer preparation/upload-session creation **does not upload file bytes**.
+There is no arbitrary HTTP uploader/downloader or local binary-document parser
+in this sample. If a normal `.docx`/text file requires a separate byte transfer,
+complete it manually in SharePoint; do not count a session URL as a created
+document. Verify the resulting file/template and its actual content in the
+library before claiming success. Report unsupported retrieval/creation instead
+of inventing an API or a success result.
+
+These are **generic** Work IQ tools: the label and prompt do not enforce a
+SharePoint-only path or a create-only action boundary. Approve only relevant,
+authorized reads and discovered `/sharepoint` creation in the intended
+site/library. Deny overwrite, delete, sharing, permission changes, and
+mail/calendar/Teams mutations. All WorkIQ calls require
+service-level approval, but this is not a replacement
+for source permissions, tenant policy, or DLP.
+
+For Foundry playground/Teams, verify that the surface displays approval requests
+and lets the intended user approve/deny each call before execution. If it does
+not, use the interactive CLI; **do not** set `require_approval="never"` as a
+workaround. Pin and republish the tested version, and update the Teams description
+to mention approval-gated SharePoint creation. See the SharePoint checks in
+[WORKSHOP.md](WORKSHOP.md).
+
+References: [SharePoint Tools for Work IQ](https://learn.microsoft.com/microsoft-365/copilot/extensibility/work-iq/sharepoint-iq),
+[permission scopes](https://learn.microsoft.com/microsoft-365/copilot/extensibility/work-iq/permissions),
+and [tenant policy governance](https://learn.microsoft.com/microsoft-365/copilot/extensibility/work-iq/mcp/policy-governance-mcp).
 
 ## Configure and create
 
@@ -107,18 +196,19 @@ python -m app.create --without-workiq
 ```
 
 That mode still calls live Foundry/public tools; it is **not** an offline emulator.
-It omits Work IQ entirely and cannot demonstrate real mail, calendar, Teams
-retrieval, or tenant access denial. There is no silent fallback to fixtures.
+It omits Work IQ entirely and cannot demonstrate real mail, calendar, Teams,
+or SharePoint access, document creation, or tenant access denial.
+There is no silent fallback to fixtures.
 
 ## Invoke
 
 ```bash
 python -m app.invoke --version 1
-python -m app.invoke --version 1 \
+python -m app.invoke --version 1 --review-workiq-tools \
   "Find the email with subject Workshop - Invoice Automation Requirements in my mailbox. Use its requirements to design an Azure architecture."
-python -m app.invoke --version 1 \
+python -m app.invoke --version 1 --review-workiq-tools \
   "Read the requirements in my Teams chat <chat-id> and propose an Azure architecture."
-python -m app.invoke --version 1 \
+python -m app.invoke --version 1 --review-workiq-tools \
   "Read my upcoming workshop architecture review meeting and summarize its agenda. Do not modify my calendar."
 ```
 
@@ -127,6 +217,9 @@ conversation; no participant context is shared. `tool_choice="auto"` permits
 tool-free refusals, unlike the original sample's required-tool invocation.
 Instructions require policy and Learn retrieval for architecture answers;
 inspect traces to check that the model actually complied.
+Use `--review-workiq-tools` in an interactive terminal for any M365 retrieval
+or creation. Each call displays its exact arguments for approval or denial.
+Without that flag, approval requests fail explicitly rather than executing.
 
 For OAuth consent, open the exact trusted consent URL surfaced by the tool,
 complete sign-in as the intended user, then retry. Tool failures and incomplete
@@ -144,7 +237,8 @@ Publishing exposes a chat surface; Work IQ separately supplies authorized
 Microsoft 365 data. Adding the agent to Teams does not grant mailbox access.
 
 1. Create the agent and complete the facilitator guide in the Foundry playground.
-   Inspect all four tools, the Work IQ allowlist, and its OAuth connection.
+   Inspect all four tools, the WorkIQ allowlist, its OAuth scopes/connection,
+   and approval UX using the checks above.
 2. Open `mea-prompt-agent` in the Foundry portal (the unchanged default agent ID).
    Under
    **Details > Agent configuration > Active version**, pin the tested version.
@@ -152,7 +246,8 @@ Microsoft 365 data. Adding the agent to Teams does not grant mailbox access.
 3. Select **Publish > Teams and Microsoft Copilot**. Set the name to
    **Microsoft Enterprise Architect Prompt**, publish version `1.0.0`, developer
    metadata, and a description such as "Workshop Azure architecture assistant;
-   read-only work context; does not execute Azure changes or send messages."
+   approval-gated work context and document creation; does not execute Azure
+   changes or send messages."
 4. Choose **Direct publish > Just you** first. Foundry generates the Teams
    package, registers the bot, enables the Activity Protocol, and configures
    Bot Service authorization. Individual-scope users need the relevant Foundry
@@ -222,7 +317,7 @@ and [Copilot Credits billing and cost management](https://learn.microsoft.com/mi
 To continue the workshop without Work IQ, run
 `python -m app.create --without-workiq` and select the newly created version in
 Foundry. Public research and internal-guideline retrieval remain available;
-mail, Teams, and calendar retrieval do not.
+mail, Teams, calendar, and SharePoint access or document creation do not.
 
 ### Bot channel/resource name is too long
 
@@ -244,10 +339,13 @@ validation errors, follow the
 
 ## Safety boundaries
 
-The Work IQ **tool allowlist** and tenant-side policy prevent the exposed agent
-from mutating Microsoft 365 data. No Azure execution tool is installed. MCP
-approval is `never` only for these selected reads and the public Learn server;
-this is not an approval bypass for write operations.
+The WorkIQ **tool allowlist** includes generic creation/action capabilities with
+**mandatory approval for every WorkIQ call**, including reads and discovery.
+Instructions restrict mutations to supported new SharePoint documents/templates;
+this is not a deterministic create-only or SharePoint-only boundary. Review
+each call and rely on source permissions, consent, and tenant policy for
+authorization. No Azure execution tool is installed. MCP approval is `never`
+only for the public Learn server.
 
 The prompt's confidentiality, injection resistance, and sabotage refusal are
 **model instructions, not deterministic authorization or DLP controls**.
@@ -285,7 +383,8 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Tests check serialized SDK tool configuration, lifecycle/cleanup behavior,
-invocation isolation, error handling, and fixture separation without Azure.
+Tests check serialized SDK tool configuration, consolidated WorkIQ document tools,
+approval/denial and continuation, lifecycle/cleanup behavior, invocation
+isolation, error handling, and fixture separation without Azure.
 They do not prove model refusal behavior, tenant permissions, OAuth, or Teams
 publishing; run the facilitator guide in your configured tenant for those.
