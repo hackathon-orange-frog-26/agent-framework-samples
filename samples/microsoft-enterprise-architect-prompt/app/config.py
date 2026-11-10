@@ -11,7 +11,6 @@ class Settings:
     project_endpoint: str
     model_deployment: str
     workiq_connection_name: str
-    sharepoint_connection_name: str = ""
 
 
 def get_settings() -> Settings:
@@ -25,5 +24,4 @@ def get_settings() -> Settings:
             or "gpt-5.3-codex-2"
         ),
         workiq_connection_name=os.environ.get("WORKIQ_CONNECTION_NAME", "").strip(),
-        sharepoint_connection_name=os.environ.get("SHAREPOINT_CONNECTION_NAME", "").strip(),
     )
