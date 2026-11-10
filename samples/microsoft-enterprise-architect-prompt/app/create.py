@@ -1,9 +1,9 @@
-"""Upload shared fictional guidelines and create a separate workshop agent."""
+"""Create a workshop agent using existing MCP connections."""
 
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
+from uuid import UUID
 
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
@@ -11,26 +11,11 @@ from azure.identity import DefaultAzureCredential
 from .agent import (
     AGENT_NAME,
     DISPLAY_NAME,
-    VECTOR_STORE_NAME,
     WORKIQ_MCP_URL,
+    SHAREPOINT_SERVER_ID,
     create_definition,
 )
 from .config import get_settings
-
-# Reuse the curated policy corpus, but never the original agent's resources.
-GUIDELINES_DIR = (
-    Path(__file__).resolve().parents[2]
-    / "enterprise-architect-prompt-agent"
-    / "internal-guidelines"
-)
-
-
-def guideline_paths() -> list[Path]:
-    paths = sorted(GUIDELINES_DIR.glob("*.md"))
-    if not paths:
-        raise RuntimeError(f"No Markdown guidelines found in {GUIDELINES_DIR}.")
-    return paths
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -38,17 +23,23 @@ def main() -> None:
     parser.add_argument(
         "--without-workiq",
         action="store_true",
-        help="Create a public-research/file-search-only agent; no M365 access.",
+        help="Omit Work IQ mail, calendar and Teams access; keep SharePoint.",
+    )
+    parser.add_argument(
+        "--without-sharepoint",
+        action="store_true",
+        help="Omit the separate SharePoint MCP server.",
     )
     args = parser.parse_args()
     settings = get_settings()
     if not args.without_workiq and not settings.workiq_connection_name:
         parser.error("Set WORKIQ_CONNECTION_NAME or explicitly use --without-workiq.")
-    paths = guideline_paths()
+    if not args.without_sharepoint and not settings.sharepoint_connection_name:
+        parser.error("Set SHAREPOINT_CONNECTION_NAME or explicitly use --without-sharepoint.")
 
     with DefaultAzureCredential() as credential, AIProjectClient(
         endpoint=settings.project_endpoint, credential=credential
-    ) as project, project.get_openai_client() as openai:
+    ) as project:
         connection_id = None
         if not args.without_workiq:
             connection = project.connections.get(settings.workiq_connection_name)
@@ -59,49 +50,56 @@ def main() -> None:
                 )
             connection_id = connection.id
 
-        vector_store = openai.vector_stores.create(name=VECTOR_STORE_NAME)
-        file_ids: list[str] = []
-        try:
-            for path in paths:
-                with path.open("rb") as guideline:
-                    uploaded = openai.files.create(file=guideline, purpose="assistants")
-                file_ids.append(uploaded.id)
-                indexed = openai.vector_stores.files.create_and_poll(
-                    vector_store_id=vector_store.id,
-                    file_id=uploaded.id,
-                )
-                if indexed.status != "completed":
+        sharepoint_connection_id = None
+        sharepoint_server_url = None
+        if not args.without_sharepoint:
+            connection = project.connections.get(settings.sharepoint_connection_name)
+            sharepoint_server_url = connection.target.rstrip("/")
+            prefix = "https://agent365.svc.cloud.microsoft/agents/tenants/"
+            suffix = f"/servers/{SHAREPOINT_SERVER_ID}"
+            tenantless_url = f"https://agent365.svc.cloud.microsoft/agents{suffix}"
+            if sharepoint_server_url != tenantless_url:
+                if not (
+                    sharepoint_server_url.startswith(prefix)
+                    and sharepoint_server_url.endswith(suffix)
+                ):
                     raise RuntimeError(
-                        f"Indexing {path.name} {indexed.status}: {indexed.last_error}"
+                        f"SharePoint connection must target {tenantless_url} "
+                        f"or {prefix}<tenant-id>{suffix}."
                     )
+                tenant_id = sharepoint_server_url[len(prefix):-len(suffix)]
+                try:
+                    UUID(tenant_id)
+                except ValueError as exc:
+                    raise RuntimeError("SharePoint connection must contain a valid tenant UUID.") from exc
+            sharepoint_connection_id = connection.id
 
-            agent = project.agents.create_version(
-                agent_name=args.name,
-                definition=create_definition(
-                    settings,
-                    vector_store_id=vector_store.id,
-                    workiq_connection_id=connection_id,
-                ),
-                description=(
-                    f"{DISPLAY_NAME}: architecture safety workshop"
-                    + (" (no M365 access)." if args.without_workiq else " with approval-gated WorkIQ.")
-                ),
-            )
-        except Exception:
-            openai.vector_stores.delete(vector_store.id)
-            for file_id in file_ids:
-                openai.files.delete(file_id)
-            raise
+        agent = project.agents.create_version(
+            agent_name=args.name,
+            definition=create_definition(
+                settings,
+                workiq_connection_id=connection_id,
+                sharepoint_connection_id=sharepoint_connection_id,
+                sharepoint_server_url=sharepoint_server_url,
+            ),
+            description=(
+                f"{DISPLAY_NAME}: architecture safety workshop"
+                + (" with auto-approved WorkIQ reads." if connection_id else " without WorkIQ.")
+                + (" With SharePoint reads and approval-gated creation." if sharepoint_connection_id else " Without SharePoint.")
+            ),
+        )
 
         print(f"Created {agent.name}, version {agent.version}")
-        print(f"Vector store: {vector_store.id}")
-        print(f"Uploaded files: {' '.join(file_ids)}")
         mode = (
-            "disabled (no M365 access)" if args.without_workiq
-            else "work context and SharePoint documents; approval required for every call"
+            "disabled (no mail, calendar or Teams access)" if args.without_workiq
+            else "read-only mail, calendar and Teams; auto-approved"
         )
         print(f"Work IQ: {mode}")
-        print("Keep these resource IDs for app.delete; do not delete shared connections.")
+        print(
+            "SharePoint: "
+            + ("reads auto-approved; approval required for file creation" if sharepoint_connection_id else "disabled")
+        )
+        print("Keep the agent version for app.delete; do not delete shared connections.")
 
 
 if __name__ == "__main__":
