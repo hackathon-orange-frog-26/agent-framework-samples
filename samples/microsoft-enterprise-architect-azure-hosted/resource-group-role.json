@@ -1,0 +1,15 @@
+{
+  "Name": "MEA Workshop Resource Group Deployer",
+  "IsCustom": true,
+  "Description": "Read and create/update resource group metadata only; no workloads, deletion, or role assignments.",
+  "Actions": [
+    "Microsoft.Resources/subscriptions/resourceGroups/read",
+    "Microsoft.Resources/subscriptions/resourceGroups/write"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/REPLACE_WITH_TARGET_SUBSCRIPTION_ID"
+  ]
+}
