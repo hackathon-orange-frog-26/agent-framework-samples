@@ -11,25 +11,20 @@ from unittest.mock import MagicMock
 from zipfile import ZipFile
 
 import httpx
+import httpx2
 import pytest
-from agent_framework import Agent, BaseChatClient, ChatResponse, ChatResponseUpdate, Content, Message, ResponseStream
-from agent_framework.foundry import FoundryChatClient
+from agent_framework import (
+    Agent, BaseChatClient, ChatResponse, ChatResponseUpdate, Content,
+    FunctionInvocationLayer, Message, ResponseStream,
+)
 from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.ai.projects.models import AgentEndpointConfig
-from openai import AsyncOpenAI
+from mcp.server.mcpserver import MCPServer
 
 from app import agent, delete, deploy, host, invoke
 from app.config import Settings, get_settings
 
 SETTINGS = Settings("https://example.services.ai.azure.com/api/projects/demo", "workshop-model")
-SHAREPOINT_URL = (
-    "https://agent365.svc.cloud.microsoft/agents/tenants/"
-    "11111111-2222-3333-4444-555555555555/servers/mcp_SharePointRemoteServer"
-)
-PRIVATE_SETTINGS = replace(
-    SETTINGS, workiq_connection_id="/connections/workiq",
-    sharepoint_connection_id="/connections/sharepoint", sharepoint_server_url=SHAREPOINT_URL,
-)
 
 
 @pytest.fixture(autouse=True)
@@ -37,8 +32,7 @@ def clean_environment(monkeypatch):
     monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
     for name in (
         "FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL_DEPLOYMENT", "AZURE_AI_MODEL_DEPLOYMENT_NAME",
-        "WORKIQ_CONNECTION_NAME", "SHAREPOINT_CONNECTION_NAME",
-        "WORKIQ_CONNECTION_ID", "SHAREPOINT_CONNECTION_ID", "SHAREPOINT_SERVER_URL",
+        "TOOLBOX_NAME", "TOOLBOX_VERSION",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -46,10 +40,6 @@ def clean_environment(monkeypatch):
 def clients(monkeypatch, module, argv):
     project = MagicMock()
     project.__enter__.return_value = project
-    project.connections.get.side_effect = lambda name: SimpleNamespace(
-        target=SHAREPOINT_URL if name == "sharepoint" else agent.WORKIQ_MCP_URL,
-        id=f"/connections/{name}",
-    )
     project.agents.create_version_from_code.return_value = SimpleNamespace(
         name=agent.AGENT_NAME, version="3",
     )
@@ -71,7 +61,7 @@ def response(*output, status="completed", id="resp_test"):
     )
 
 
-def approval(*, name="createSmallTextFile", server="SharePoint", id="approval_test"):
+def approval(*, name="SharePoint___createSmallTextFile", server="agent_framework", id="approval_test"):
     return SimpleNamespace(
         type="mcp_approval_request", id=id, name=name, server_label=server,
         arguments='{"filename":"new.md","contentText":"Synthetic review"}',
@@ -86,24 +76,34 @@ def test_configuration_requires_endpoint_and_supports_hosted_model(monkeypatch):
     assert get_settings().model_deployment == "hosted-model"
     monkeypatch.setenv("FOUNDRY_MODEL_DEPLOYMENT", " local-model ")
     assert get_settings().model_deployment == "local-model"
-    monkeypatch.setenv("SHAREPOINT_CONNECTION_ID", "/connections/sharepoint")
-    with pytest.raises(ValueError, match="both"):
+
+
+def test_toolbox_configuration_defaults_overrides_and_validation(monkeypatch):
+    monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", SETTINGS.project_endpoint)
+    assert get_settings().toolbox_name == "WorkIQToolbox"
+    assert get_settings().toolbox_version == "1"
+    monkeypatch.setenv("TOOLBOX_NAME", " custom-toolbox ")
+    monkeypatch.setenv("TOOLBOX_VERSION", " 2 ")
+    assert get_settings().toolbox_name == "custom-toolbox"
+    assert get_settings().toolbox_version == "2"
+    monkeypatch.setenv("TOOLBOX_VERSION", " ")
+    with pytest.raises(ValueError, match="TOOLBOX_VERSION"):
         get_settings()
-    monkeypatch.setenv("SHAREPOINT_SERVER_URL", SHAREPOINT_URL + "/")
-    assert get_settings().sharepoint_server_url == SHAREPOINT_URL
 
 
-def test_agent_wires_native_foundry_tools_not_application_mcp(monkeypatch):
+def test_agent_wires_workiq_toolbox_and_preserves_native_tools(monkeypatch):
     factory = MagicMock()
     client_factory = MagicMock()
     monkeypatch.setattr(agent, "Agent", factory)
     monkeypatch.setattr(agent, "FoundryChatClient", client_factory)
+    toolbox_factory = MagicMock()
+    monkeypatch.setattr(agent, "FoundryToolbox", toolbox_factory)
     context = MagicMock()
     context.platform_headers.return_value = {"x-agent-foundry-call-id": "opaque-call"}
     monkeypatch.setattr(agent, "get_request_context", lambda: context)
     credential = MagicMock()
 
-    agent.create_agent(PRIVATE_SETTINGS, credential)
+    agent.create_agent(SETTINGS, credential)
 
     client_factory.assert_called_once_with(
         project_endpoint=SETTINGS.project_endpoint, model="workshop-model", credential=credential,
@@ -113,90 +113,66 @@ def test_agent_wires_native_foundry_tools_not_application_mcp(monkeypatch):
     assert options["name"] == "mea-hosted-agent"
     assert "Mermaid" in options["instructions"]
     assert "never overwrite" in options["instructions"]
-    tools = [tool.as_dict() for tool in options["tools"]]
-    assert tools[:2] == [
+    assert options["default_options"] == {"store": False}
+    toolbox_factory.assert_called_once_with(
+        credential,
+        url=f"{SETTINGS.project_endpoint}/toolboxes/WorkIQToolbox/versions/1/mcp?api-version=v1",
+        name="WorkIQToolbox",
+        approval_mode="always_require",
+    )
+    assert options["tools"][2] is toolbox_factory.return_value
+    tools = [tool.as_dict() for tool in options["tools"] if tool is not toolbox_factory.return_value]
+    assert tools == [
         {"type": "web_search"},
         {"type": "mcp", "server_label": "MicrosoftLearn",
          "server_url": agent.MSLEARN_MCP_URL, "require_approval": "never"},
     ]
-    assert tools[2] == {
-        "type": "mcp", "server_label": "WorkIQ", "server_url": agent.WORKIQ_MCP_URL,
-        "project_connection_id": "/connections/workiq",
-        "allowed_tools": ["search_paths", "get_schema", "fetch"], "require_approval": "never",
-    }
-    assert tools[3] == {
-        "type": "mcp", "server_label": "SharePoint", "server_url": SHAREPOINT_URL,
-        "project_connection_id": "/connections/sharepoint",
-        "allowed_tools": list(agent.SHAREPOINT_TOOLS),
-        "require_approval": {
-            "never": {"tool_names": list(agent.SHAREPOINT_READ_TOOLS)},
-            "always": {"tool_names": ["createSmallTextFile", "createSmallBinaryFile"]},
-        },
-    }
 
 
-@pytest.mark.parametrize("workiq,sharepoint,labels", [
-    ("", "", ["MicrosoftLearn"]),
-    ("/connections/workiq", "", ["MicrosoftLearn", "WorkIQ"]),
-    ("", "/connections/sharepoint", ["MicrosoftLearn", "SharePoint"]),
-])
-def test_explicitly_disabled_private_tools_are_omitted(workiq, sharepoint, labels):
+@pytest.mark.parametrize("toolbox", ["", "WorkIQToolbox"])
+def test_explicitly_disabled_toolbox_is_omitted(monkeypatch, toolbox):
+    toolbox_factory = MagicMock()
+    monkeypatch.setattr(agent, "FoundryToolbox", toolbox_factory)
+    settings = replace(SETTINGS, toolbox_name=toolbox)
+    configured = agent.create_tools(settings, MagicMock())
+    assert toolbox_factory.call_count == bool(toolbox)
+    tools = [tool.as_dict() for tool in configured if tool is not toolbox_factory.return_value]
+    assert [tool["server_label"] for tool in tools if tool["type"] == "mcp"] == ["MicrosoftLearn"]
+
+
+def test_toolbox_url_uses_configured_project_name_and_version(monkeypatch):
+    factory = MagicMock()
+    monkeypatch.setattr(agent, "FoundryToolbox", factory)
+    credential = MagicMock()
     settings = replace(
-        PRIVATE_SETTINGS, workiq_connection_id=workiq, sharepoint_connection_id=sharepoint,
-        sharepoint_server_url=SHAREPOINT_URL if sharepoint else "",
+        SETTINGS, project_endpoint=SETTINGS.project_endpoint + "/",
+        toolbox_name="custom-toolbox", toolbox_version="2",
     )
-    tools = [tool.as_dict() for tool in agent.create_tools(settings)]
-    assert [tool["server_label"] for tool in tools if tool["type"] == "mcp"] == labels
+    agent.create_tools(settings, credential)
+    factory.assert_called_once_with(
+        credential,
+        url=f"{SETTINGS.project_endpoint}/toolboxes/custom-toolbox/versions/2/mcp?api-version=v1",
+        name="custom-toolbox",
+        approval_mode="always_require",
+    )
+    with pytest.raises(ValueError, match="version"):
+        agent.create_tools(replace(settings, toolbox_version=""), credential)
 
 
-@pytest.mark.parametrize("url", [
-    "https://evil.example/servers/mcp_SharePointRemoteServer",
-    SHAREPOINT_URL.replace("11111111-2222-3333-4444-555555555555", "not-a-uuid"),
-    SHAREPOINT_URL.replace("mcp_SharePointRemoteServer", "mcp_OneDriveRemoteServer"),
-    SHAREPOINT_URL + "?token=wrong",
-])
-def test_invalid_sharepoint_target_rejected_before_upload(monkeypatch, url):
+def test_deploy_requires_explicit_opt_out_for_empty_toolbox(monkeypatch, capsys):
     project, _ = clients(monkeypatch, deploy, ["deploy"])
-    project.connections.get.side_effect = None
-    project.connections.get.return_value = SimpleNamespace(target=url, id="/connections/sharepoint")
-    with pytest.raises(ValueError, match="SharePoint"):
-        deploy.resolve_connections(project, SETTINGS, workiq_name="", sharepoint_name="sharepoint")
-    project.agents.create_version_from_code.assert_not_called()
-
-
-def test_connections_validate_workiq_and_accept_tenantless_sharepoint():
-    project = MagicMock()
-    project.connections.get.return_value = SimpleNamespace(target="https://example.com", id="wrong")
-    with pytest.raises(ValueError, match="Work IQ"):
-        deploy.resolve_connections(project, SETTINGS, workiq_name="workiq", sharepoint_name="")
-    url = "https://agent365.svc.cloud.microsoft/agents/servers/mcp_SharePointRemoteServer"
-    project.connections.get.return_value = SimpleNamespace(target=url, id="/connections/sharepoint")
-    settings = deploy.resolve_connections(project, PRIVATE_SETTINGS, workiq_name="", sharepoint_name="sharepoint")
-    assert settings.sharepoint_server_url == url
-    assert not settings.workiq_connection_id
-
-
-@pytest.mark.parametrize("flags,missing", [
-    ([], "WORKIQ_CONNECTION_NAME"),
-    (["--without-workiq"], "SHAREPOINT_CONNECTION_NAME"),
-])
-def test_deploy_requires_explicit_opt_out(monkeypatch, capsys, flags, missing):
-    project, _ = clients(monkeypatch, deploy, ["deploy", *flags])
+    monkeypatch.setattr(deploy, "get_settings", lambda: replace(SETTINGS, toolbox_name=""))
     with pytest.raises(SystemExit) as exc:
         deploy.main()
     assert exc.value.code == 2
-    assert missing in capsys.readouterr().err
+    assert "TOOLBOX_NAME" in capsys.readouterr().err
     project.agents.create_version_from_code.assert_not_called()
 
 
 @pytest.mark.parametrize("private", [False, True])
-def test_deploy_packages_runtime_resolves_connections_and_routes(monkeypatch, private):
-    flags = [] if private else ["--without-workiq", "--without-sharepoint"]
+def test_deploy_packages_runtime_and_routes_without_resolving_connections(monkeypatch, private):
+    flags = [] if private else ["--without-toolbox"]
     project, _ = clients(monkeypatch, deploy, ["deploy", "--name", "custom-hosted", *flags])
-    if private:
-        monkeypatch.setenv("WORKIQ_CONNECTION_NAME", "workiq")
-        monkeypatch.setenv("SHAREPOINT_CONNECTION_NAME", "sharepoint")
-
     deploy.main()
 
     upload = project.agents.create_version_from_code.call_args.kwargs
@@ -213,9 +189,8 @@ def test_deploy_packages_runtime_resolves_connections_and_routes(monkeypatch, pr
     assert definition["environment_variables"] == {
         "FOUNDRY_PROJECT_ENDPOINT": SETTINGS.project_endpoint,
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": "workshop-model",
-        "WORKIQ_CONNECTION_ID": "/connections/workiq" if private else "",
-        "SHAREPOINT_CONNECTION_ID": "/connections/sharepoint" if private else "",
-        "SHAREPOINT_SERVER_URL": SHAREPOINT_URL if private else "",
+        "TOOLBOX_NAME": "WorkIQToolbox" if private else "",
+        "TOOLBOX_VERSION": "1",
     }
     project.agents.get_version.assert_called_once_with(agent_name="custom-hosted", agent_version="3")
     route = project.agents.update_details.call_args.kwargs
@@ -227,6 +202,7 @@ def test_deploy_packages_runtime_resolves_connections_and_routes(monkeypatch, pr
         "protocol_configuration": {"responses": {}},
     }
     project.agents.create_version.assert_not_called()
+    project.connections.get.assert_not_called()
 
 
 def test_zip_allowlist_excludes_secrets_and_entry_point_runs_host(tmp_path, monkeypatch):
@@ -253,7 +229,7 @@ def test_zip_allowlist_excludes_secrets_and_entry_point_runs_host(tmp_path, monk
 
 
 def test_failed_build_does_not_replace_routing_and_cleans_zip(monkeypatch):
-    project, _ = clients(monkeypatch, deploy, ["deploy", "--without-workiq", "--without-sharepoint"])
+    project, _ = clients(monkeypatch, deploy, ["deploy", "--without-toolbox"])
     project.agents.get_version.return_value = {"status": "failed", "error": "Remote build failed"}
     with pytest.raises(RuntimeError, match="Remote build failed"):
         deploy.main()
@@ -264,7 +240,7 @@ def test_failed_build_does_not_replace_routing_and_cleans_zip(monkeypatch):
 
 
 def test_redeploy_preserves_published_protocols_and_authorization(monkeypatch):
-    project, _ = clients(monkeypatch, deploy, ["deploy", "--without-workiq", "--without-sharepoint"])
+    project, _ = clients(monkeypatch, deploy, ["deploy", "--without-toolbox"])
     existing = AgentEndpointConfig({
         "protocol_configuration": {"activity": {}, "responses": {}},
         "authorization_schemes": [{"type": "BotServiceTenant"}],
@@ -294,14 +270,14 @@ def test_host_factory_is_request_scoped_and_closes_credential(monkeypatch):
     credential.__enter__.return_value = credential
     factory = MagicMock(side_effect=[MagicMock(), MagicMock()])
     server = MagicMock()
-    monkeypatch.setattr(host, "get_settings", lambda: PRIVATE_SETTINGS)
+    monkeypatch.setattr(host, "get_settings", lambda: SETTINGS)
     monkeypatch.setattr(host, "DefaultAzureCredential", lambda: credential)
     monkeypatch.setattr(host, "create_agent", factory)
     monkeypatch.setattr(host, "ResponsesHostServer", server)
     host.main()
     request_factory = server.call_args.kwargs["agent"]
     assert request_factory() is not request_factory()
-    factory.assert_called_with(PRIVATE_SETTINGS, credential)
+    factory.assert_called_with(SETTINGS, credential)
     server.return_value.run.assert_called_once_with()
     credential.__exit__.assert_called_once()
 
@@ -342,7 +318,7 @@ def test_approval_batch_is_validated_before_any_prompt(monkeypatch):
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     read_input = MagicMock(return_value="y")
     monkeypatch.setattr("builtins.input", read_input)
-    with pytest.raises(RuntimeError, match="allowlist"):
+    with pytest.raises(RuntimeError, match="local toolbox"):
         invoke.review_calls(response(approval(), approval(name="do_action", server="WorkIQ")))
     read_input.assert_not_called()
 
@@ -438,74 +414,93 @@ def test_real_responses_host_round_trips_native_approval(tmp_path, monkeypatch, 
 
 
 @pytest.mark.parametrize("approve", [True, False])
-def test_native_foundry_client_serializes_tools_and_replays_approval(tmp_path, monkeypatch, approve):
+def test_toolbox_discovery_auth_call_id_lifecycle_and_approval(tmp_path, monkeypatch, approve):
     monkeypatch.setenv("HOME", str(tmp_path))
-    payloads = []
+    methods = []
+    toolbox_clients = []
+    credential = MagicMock()
+    credential.get_token.return_value = SimpleNamespace(token="offline-toolbox-token", expires_on=9999999999)
+    mcp_server = MCPServer("offline-toolbox", subscriptions=False)
 
-    def transport(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        payloads.append(body)
-        assert request.headers["x-agent-foundry-call-id"] == f"call-{len(payloads)}"
-        assert "x-agent-user-id" not in request.headers
-        decisions = [item for item in body["input"] if item.get("type") == "mcp_approval_response"]
-        if decisions:
-            assert decisions == [{
-                "type": "mcp_approval_response", "approval_request_id": "provider_approval",
-                "approve": approve,
-            }]
-            output = {
-                "type": "message", "id": "msg_provider", "role": "assistant", "status": "completed",
-                "content": [{"type": "output_text", "text": "Created" if approve else "Denied", "annotations": []}],
-            }
-        else:
-            output = {
-                "type": "mcp_approval_request", "id": "provider_approval",
-                "name": "createSmallTextFile", "server_label": "SharePoint",
-                "arguments": '{"filename":"new.md","contentText":"Synthetic"}',
-            }
-        result = {
-            "id": f"resp_provider_{len(payloads)}", "object": "response", "created_at": 1,
-            "status": "completed", "model": "workshop-model", "output": [output],
-            "usage": None,
-        }
-        events = [
-            {"type": "response.output_item.added", "output_index": 0, "item": output},
-        ]
-        if decisions:
-            events.append({
-                "type": "response.output_text.delta", "output_index": 0, "content_index": 0,
-                "item_id": "msg_provider", "delta": "Created" if approve else "Denied",
-            })
-        events.extend([
-            {"type": "response.output_item.done", "output_index": 0, "item": output},
-            {"type": "response.completed", "response": result},
-        ])
-        return httpx.Response(
-            200, headers={"content-type": "text/event-stream"},
-            text="".join(f"data: {json.dumps(event)}\n\n" for event in events),
+    @mcp_server.tool(name="SharePoint___createSmallTextFile")
+    async def create_file(filename: str) -> str:
+        assert filename == "new.md"
+        return "Created"
+
+    mcp_app = mcp_server.streamable_http_app(
+        streamable_http_path="/api/projects/demo/toolboxes/WorkIQToolbox/versions/1/mcp",
+        json_response=True, stateless_http=True, host="example.services.ai.azure.com",
+    )
+    mcp_transport = httpx2.ASGITransport(app=mcp_app)
+
+    async def transport(request: httpx2.Request) -> httpx2.Response:
+        assert str(request.url) == (
+            f"{SETTINGS.project_endpoint}/toolboxes/WorkIQToolbox/versions/1/mcp?api-version=v1"
         )
+        assert request.headers["authorization"] == "Bearer offline-toolbox-token"
+        assert request.headers["x-agent-foundry-call-id"] in {"call-1", "call-2"}
+        if request.method == "POST":
+            body = json.loads(request.content)
+            methods.append(body["method"])
+            if body["method"] == "tools/call":
+                assert request.headers["x-agent-foundry-call-id"] == "call-2"
+                assert body["params"]["name"] == "SharePoint___createSmallTextFile"
+                assert body["params"]["arguments"] == {"filename": "new.md"}
+        return await mcp_transport.handle_async_request(request)
 
-    def create_client(**kwargs):
-        project = MagicMock()
-        project.get_openai_client.return_value = AsyncOpenAI(
-            api_key="offline-test", base_url="https://foundry.example/openai/v1/",
-            http_client=httpx.AsyncClient(transport=httpx.MockTransport(transport)),
-            default_headers=kwargs["default_headers"],
-        )
-        return FoundryChatClient(project_client=project, model=kwargs["model"])
+    original_init = httpx2.AsyncClient.__init__
 
-    monkeypatch.setattr(agent, "FoundryChatClient", create_client)
+    def init_client(self, *args, **kwargs):
+        if "transport" not in kwargs:
+            kwargs["transport"] = httpx2.MockTransport(transport)
+            toolbox_clients.append(self)
+        original_init(self, *args, **kwargs)
+
+    class ToolboxClient(FunctionInvocationLayer, BaseChatClient):
+        STORES_BY_DEFAULT = False
+
+        def _inner_get_response(
+            self, *, messages: Sequence[Message], stream: bool, options: Mapping[str, object], **kwargs: object,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def updates() -> AsyncIterator[ChatResponseUpdate]:
+                assert options["store"] is False
+                results = [
+                    content for message in messages for content in message.contents
+                    if content.type == "function_result"
+                ]
+                contents = (
+                    [Content.from_text("Created" if approve else "Denied")]
+                    if results else
+                    [Content.from_function_call(
+                        "tool_call", "SharePoint___createSmallTextFile", arguments={"filename": "new.md"},
+                    )]
+                )
+                yield ChatResponseUpdate(role="assistant", contents=contents)
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+    monkeypatch.setattr(httpx2.AsyncClient, "__init__", init_client)
+    monkeypatch.setattr(agent, "FoundryChatClient", lambda **kwargs: ToolboxClient())
 
     async def scenario():
-        server = ResponsesHostServer(agent=lambda: agent.create_agent(PRIVATE_SETTINGS, MagicMock()))
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        server = ResponsesHostServer(agent=lambda: agent.create_agent(SETTINGS, credential))
+        async with (
+            mcp_app.router.lifespan_context(mcp_app),
+            httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client,
+        ):
             first = await client.post(
                 "/responses", json={"input": "Create new.md", "stream": False},
                 headers={"x-agent-foundry-call-id": "call-1"},
             )
             assert first.status_code == 200, first.text
             body = first.json()
+            assert body["status"] == "completed", first.text
+            assert body["status"] == "completed", first.text
             request = next(item for item in body["output"] if item["type"] == "mcp_approval_request")
+            assert request["server_label"] == "agent_framework"
+            assert request["name"] == "SharePoint___createSmallTextFile"
+            assert "tools/call" not in methods
+            assert all(client.is_closed for client in toolbox_clients)
             second = await client.post(
                 "/responses", headers={"x-agent-foundry-call-id": "call-2"},
                 json={
@@ -524,9 +519,6 @@ def test_native_foundry_client_serializes_tools_and_replays_approval(tmp_path, m
             assert text == ("Created" if approve else "Denied")
 
     asyncio.run(scenario())
-    assert len(payloads) == 2
-    expected_tools = [tool.as_dict() for tool in agent.create_tools(PRIVATE_SETTINGS)]
-    for payload in payloads:
-        assert payload["tools"] == expected_tools
-        assert payload["model"] == "workshop-model"
-        assert payload["store"] is False
+    assert methods.count("tools/call") == int(approve)
+    assert all(client.is_closed for client in toolbox_clients)
+    credential.get_token.assert_called_with("https://ai.azure.com/.default")

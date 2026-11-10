@@ -1,4 +1,4 @@
-"""Invoke the hosted endpoint with optional interactive SharePoint approvals."""
+"""Invoke the hosted endpoint with optional interactive toolbox approvals."""
 
 from __future__ import annotations
 
@@ -10,22 +10,23 @@ from azure.identity import DefaultAzureCredential
 from openai.types.responses import Response
 from openai.types.responses.response_input_param import McpApprovalResponse, ResponseInputParam
 
-from .agent import AGENT_NAME, DEFAULT_QUESTION, SHAREPOINT_CREATE_TOOLS
+from .agent import AGENT_NAME, DEFAULT_QUESTION
 from .config import get_settings
 
 
 def review_calls(response: Response) -> ResponseInputParam:
     requests = [item for item in response.output if item.type == "mcp_approval_request"]
     for item in requests:
-        if item.server_label != "SharePoint" or item.name not in SHAREPOINT_CREATE_TOOLS:
-            raise RuntimeError("Unexpected MCP approval request outside the SharePoint creation allowlist.")
+        if item.server_label != "agent_framework":
+            raise RuntimeError("Unexpected MCP approval request outside the local toolbox.")
     if not sys.stdin.isatty():
-        raise RuntimeError("SharePoint approval requires an interactive terminal; no calls were approved.")
+        raise RuntimeError("Toolbox approval requires an interactive terminal; no calls were approved.")
     approvals: ResponseInputParam = []
     for item in requests:
         print(
             f"{item.server_label} tool: {item.name}\nArguments: {item.arguments}\n"
-            "Review the destination, filename, content and conflict check. "
+            "Review the operation and arguments; for file creation, verify destination, "
+            "filename, content and conflict check. "
             "Approve this exact call? (y/N): ",
             file=sys.stderr, end="", flush=True,
         )
@@ -69,7 +70,7 @@ def main() -> None:
                 break
             if not args.review_m365_tools:
                 raise RuntimeError(
-                    "SharePoint creation requires --review-m365-tools in an interactive terminal. "
+                    "Toolbox calls require --review-m365-tools in an interactive terminal. "
                     "This CLI never auto-approves calls."
                 )
             if approval_rounds >= 20:
