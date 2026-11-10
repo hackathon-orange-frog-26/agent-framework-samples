@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import tempfile
 import time
-from dataclasses import replace
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -24,7 +23,7 @@ from azure.ai.projects.models import (
 )
 from azure.identity import DefaultAzureCredential
 
-from .agent import AGENT_NAME
+from .agent import AGENT_NAME, WORKIQ_MCP_URL
 from .config import get_settings
 
 
@@ -57,20 +56,22 @@ def wait_until_active(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--name", default=AGENT_NAME)
-    parser.add_argument(
-        "--without-toolbox", "--without-workiq", dest="without_toolbox", action="store_true",
-        help="Disable the toolbox, including Work IQ and SharePoint.",
-    )
     args = parser.parse_args()
     settings = get_settings()
-    if args.without_toolbox:
-        settings = replace(settings, toolbox_name="")
-    elif not settings.toolbox_name:
-        parser.error("Set TOOLBOX_NAME or explicitly use --without-toolbox.")
+    if not settings.workiq_connection_name:
+        parser.error("Set WORKIQ_CONNECTION_NAME; Work IQ is required for Microsoft 365 access.")
 
     with DefaultAzureCredential() as credential, AIProjectClient(
         endpoint=settings.project_endpoint, credential=credential
     ) as project, tempfile.TemporaryDirectory(prefix="mea-hosted-") as temp_dir:
+        connection = project.connections.get(settings.workiq_connection_name)
+        if connection.target.rstrip("/") != WORKIQ_MCP_URL:
+            raise RuntimeError(
+                f"Work IQ connection must target {WORKIQ_MCP_URL}; "
+                "do not reuse a preview A2A or unrelated connection."
+            )
+        if not connection.id or not connection.id.strip():
+            raise ValueError("Work IQ requires a connection ID.")
         zip_path = Path(temp_dir) / "agent.zip"
         create_code_zip(Path(__file__).resolve().parent.parent, zip_path)
         with zip_path.open("rb") as code:
@@ -90,8 +91,7 @@ def main() -> None:
                     environment_variables={
                         "FOUNDRY_PROJECT_ENDPOINT": settings.project_endpoint,
                         "AZURE_AI_MODEL_DEPLOYMENT_NAME": settings.model_deployment,
-                        "TOOLBOX_NAME": settings.toolbox_name,
-                        "TOOLBOX_VERSION": settings.toolbox_version,
+                        "WORKIQ_CONNECTION_ID": connection.id,
                     },
                 ),
                 code=code,
@@ -113,10 +113,8 @@ def main() -> None:
             ),
         )
         print(f"Agent endpoint routed to version {agent.version}", flush=True)
-        print(
-            f"Toolbox: {settings.toolbox_name} version {settings.toolbox_version}"
-            if settings.toolbox_name else "Toolbox: disabled (Work IQ and SharePoint unavailable)"
-        )
+        print("Microsoft Learn: full MCP catalog; all tool calls auto-approved.")
+        print("Work IQ: full catalog, including SharePoint; all tool calls auto-approved.")
 
 
 if __name__ == "__main__":

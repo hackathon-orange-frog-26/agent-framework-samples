@@ -10,18 +10,14 @@ from dataclasses import dataclass
 class Settings:
     project_endpoint: str
     model_deployment: str
-    toolbox_name: str = "WorkIQToolbox"
-    toolbox_version: str = "1"
+    workiq_connection_name: str = ""
+    workiq_connection_id: str = ""
 
 
 def get_settings() -> Settings:
     endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT", "").strip()
     if not endpoint:
         raise RuntimeError("FOUNDRY_PROJECT_ENDPOINT environment variable is required.")
-    toolbox_name = os.environ.get("TOOLBOX_NAME", "WorkIQToolbox").strip()
-    toolbox_version = os.environ.get("TOOLBOX_VERSION", "1").strip()
-    if toolbox_name and not toolbox_version:
-        raise ValueError("TOOLBOX_VERSION is required when TOOLBOX_NAME is set.")
     return Settings(
         project_endpoint=endpoint,
         model_deployment=(
@@ -29,6 +25,6 @@ def get_settings() -> Settings:
             or os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "").strip()
             or "gpt-5.3-codex-2"
         ),
-        toolbox_name=toolbox_name,
-        toolbox_version=toolbox_version,
+        workiq_connection_name=os.environ.get("WORKIQ_CONNECTION_NAME", "").strip(),
+        workiq_connection_id=os.environ.get("WORKIQ_CONNECTION_ID", "").strip(),
     )
