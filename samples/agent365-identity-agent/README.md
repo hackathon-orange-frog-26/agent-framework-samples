@@ -18,6 +18,43 @@ that identity:
    SDK (`microsoft-agents-a365-runtime`) to resolve the agent identity and parent blueprint
    from that token.
 
+## Flow overview
+
+```text
+           Developer CLI: question + non-secret configuration
+                                  |
+               Ephemeral Azure Container Apps sandbox
+                                  |
+                 Python Agent Framework agent
+                                  |
+                Sandbox managed identity federation
+                                  |
+             Blueprint exchange (fmi_path: child agent)
+                                  |
+              Child agent identity's app-only S2S tokens
+                                  |
+                 +----------------+----------------+
+                 |                                 |
+          FoundryChatClient                 Optional Agent 365
+                 |                             telemetry
+          Foundry model                            |
+                 |                     Agent 365 observability
+       Answer + identity diagnostics
+                 |
+           CLI output, then sandbox deletion
+```
+
+During setup, the management CLI uses the developer's delegated Graph permissions to
+create the blueprint and agent identity. The launcher uses the developer's Azure access
+to provision the sandbox, but **runtime Foundry calls use the child agent's own identity**.
+The sandbox managed identity authenticates the blueprint; the FMI exchange then supplies
+separate app-only tokens for Foundry and, when enabled, Agent 365 telemetry.
+
+The Agent 365 SDK resolves the agent identity and parent blueprint from the Foundry
+token for diagnostics. Foundry access is authorized through the child identity's Azure
+RBAC assignment, not the developer's model permissions. No user assertion, OBO flow,
+or Work IQ MCP connection is used.
+
 ## How the pieces fit
 
 | Concern | Implementation |
