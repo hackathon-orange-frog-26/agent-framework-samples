@@ -1,0 +1,11 @@
+agent-framework-core>=1.18,<=2
+agent-framework-foundry>=1.13,<=2
+azure-core>=1.30,<2
+azure-identity>=1.19,<2
+mcp>=2.2,<3
+microsoft-agents-a365-runtime>=2.0,<3
+microsoft-agents-authentication-msal>=1.9,<2
+microsoft-opentelemetry>=1.6,<2
+msal>=1.39,<2
+PyJWT>=2.10,<3
+tenacity>=9.1.4,<9.2
